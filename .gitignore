@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-sovran
+scutum
 tests.test
 
 # ── Test & coverage ──────────────────────────────────────────
@@ -37,8 +37,8 @@ kms.toml
 # ── Runtime data & secrets (created by docker-compose) ───────
 data/
 secrets/
-sovran_data/
-sovran_secrets/
+scutum_data/
+scutum_secrets/
 edge_data/
 edge_secrets/
 
