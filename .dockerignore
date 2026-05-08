@@ -1,0 +1,31 @@
+# Version control
+.git
+.gitignore
+
+# CI / docs
+*.md
+LICENSE
+scripts/
+
+# Local dev
+.env
+.env.*
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime dirs (built inside container)
+data/
+secrets/
+coverage.out
+
+# Compiled binaries (built inside Docker)
+api
+sovran
+tests.test
+*.test
+*.out
+
+# Test files (not needed for build)
+cmd/tests/

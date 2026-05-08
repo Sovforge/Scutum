@@ -1,0 +1,2028 @@
+openapi: 3.0.3
+info:
+  title: Scutum API
+  version: 1.0.0
+  description: |
+    Scutum is a self-hosted infrastructure orchestration platform.
+    It manages containers (Docker), Kubernetes deployments, WireGuard networking,
+    S3-compatible storage, Git sync, plugin extensions, and emergency KMS recovery.
+
+    ## Authentication
+    Most endpoints require authentication. Two methods are accepted:
+    - **JWT Bearer token** — obtained via `POST /auth/login`
+    - **API Key** — created via `POST /auth/keys`, sent in the `X-API-Key` header
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Health
+    description: API liveness check
+  - name: Version
+    description: Build version information
+  - name: Auth
+    description: Registration, login, and API key management
+  - name: Users
+    description: User management (admin only)
+  - name: Roles
+    description: Role and permission management (admin only)
+  - name: Setup
+    description: Initial installation and KMS configuration
+  - name: Nodes
+    description: WireGuard mesh node registry
+  - name: Docker
+    description: Docker container lifecycle management
+  - name: Kubernetes
+    description: Kubernetes deployment management
+  - name: Git
+    description: Git repository synchronisation
+  - name: Storage
+    description: S3-compatible object storage operations
+  - name: Network
+    description: WireGuard peer management
+  - name: Plugins
+    description: Plugin lifecycle management
+  - name: Sync
+    description: Edge-node configuration distribution
+  - name: Recovery
+    description: Emergency KMS key recovery via Shamir secret sharing
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from `POST /auth/login`
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key obtained from `POST /auth/keys`
+
+  parameters:
+    ContainerID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Docker container ID or name
+    Namespace:
+      name: ns
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Kubernetes namespace
+    DeploymentName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Kubernetes deployment name
+
+  schemas:
+    # ── Common ──────────────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: invalid credentials
+        code:
+          type: string
+          example: UNAUTHORIZED
+        trace_id:
+          type: string
+          example: abc123
+        time:
+          type: string
+          format: date-time
+
+    SuccessResponse:
+      type: object
+      properties:
+        data: {}
+        message:
+          type: string
+        trace_id:
+          type: string
+        time:
+          type: string
+          format: date-time
+
+    # ── Auth ────────────────────────────────────────────────────────────────
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: alice
+        password:
+          type: string
+          minLength: 12
+          example: supersecretpass
+
+    RegisterResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: alice
+        password:
+          type: string
+          example: supersecretpass
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT valid for 24 hours
+
+    CreateAPIKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: ci-deploy-key
+        expires_at:
+          type: string
+          format: date-time
+          description: Optional expiry in RFC 3339 format
+          example: "2025-12-31T23:59:59Z"
+
+    CreateAPIKeyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+          description: Raw API key — shown once, store it securely
+
+    # ── Setup ────────────────────────────────────────────────────────────────
+    KMSConfig:
+      type: object
+      required: [provider]
+      properties:
+        provider:
+          type: string
+          enum: [local, vault, aws, gcp, azure]
+          example: local
+        local:
+          type: object
+          properties:
+            key_file:
+              type: string
+              example: /run/secrets/master.key
+        vault:
+          type: object
+          properties:
+            addr:
+              type: string
+              example: https://vault.example.com
+            key_name:
+              type: string
+            token_file:
+              type: string
+        aws:
+          type: object
+          properties:
+            region:
+              type: string
+              example: us-east-1
+            key_id:
+              type: string
+            access_key:
+              type: string
+            secret_key:
+              type: string
+        gcp:
+          type: object
+          properties:
+            project_id:
+              type: string
+            location_id:
+              type: string
+            key_ring_id:
+              type: string
+            key_id:
+              type: string
+            token_file:
+              type: string
+        azure:
+          type: object
+          properties:
+            vault_url:
+              type: string
+            key_name:
+              type: string
+            tenant_id:
+              type: string
+            client_id:
+              type: string
+            token_file:
+              type: string
+
+    WireGuardConfig:
+      type: object
+      properties:
+        listen_port:
+          type: integer
+          example: 51820
+        address:
+          type: string
+          example: 10.0.0.1/24
+        mtu:
+          type: integer
+          example: 1420
+        hub_endpoint:
+          type: string
+          example: 203.0.113.1:51820
+        hub_public_key:
+          type: string
+        hub_allowed_ips:
+          type: string
+          example: 10.0.0.0/24
+
+    SetupRequest:
+      type: object
+      required: [install_type, kms, admin]
+      properties:
+        install_type:
+          type: string
+          enum: [hub, remote, combined]
+          example: combined
+        kms:
+          $ref: '#/components/schemas/KMSConfig'
+        wireguard:
+          $ref: '#/components/schemas/WireGuardConfig'
+        admin:
+          type: object
+          required: [username, password]
+          properties:
+            username:
+              type: string
+              example: admin
+            password:
+              type: string
+              minLength: 12
+
+    SetupResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        admin_id:
+          type: string
+          format: uuid
+        kms_provider:
+          type: string
+        install_type:
+          type: string
+        wireguard:
+          type: object
+          properties:
+            public_key:
+              type: string
+            address:
+              type: string
+            listen_port:
+              type: integer
+
+    SetupStatus:
+      type: object
+      properties:
+        setup_complete:
+          type: boolean
+        install_type:
+          type: string
+        kms_provider:
+          type: string
+
+    # ── Docker ───────────────────────────────────────────────────────────────
+    DeployRequest:
+      type: object
+      required: [repo, name, port, host_port]
+      properties:
+        repo:
+          type: string
+          example: nginx:latest
+        name:
+          type: string
+          description: Unique container name
+          example: my-nginx
+        port:
+          type: integer
+          description: Container-internal port
+          example: 80
+        host_port:
+          type: integer
+          description: Host port to expose
+          example: 8081
+        env:
+          type: array
+          items:
+            type: string
+          example: ["ENV=production", "PORT=80"]
+        volumes:
+          type: array
+          items:
+            type: string
+          example: ["/data:/app/data"]
+        memory_limit:
+          type: integer
+          format: int64
+          description: Memory limit in bytes
+          example: 536870912
+        cpu_limit:
+          type: number
+          format: float
+          description: CPU quota (e.g. 0.5 = half a core)
+          example: 0.5
+        restart:
+          type: string
+          enum: [always, unless-stopped, on-failure, "no"]
+          example: always
+
+    DeployResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Container ID
+        status:
+          type: string
+        message:
+          type: string
+        error:
+          type: string
+
+    # ── Kubernetes ───────────────────────────────────────────────────────────
+    K8sDeployRequest:
+      type: object
+      required: [name, image]
+      properties:
+        name:
+          type: string
+          example: my-app
+        image:
+          type: string
+          example: nginx:latest
+
+    # ── Git ──────────────────────────────────────────────────────────────────
+    GitSyncRequest:
+      type: object
+      required: [repo_url, target_dir]
+      properties:
+        repo_url:
+          type: string
+          example: https://github.com/example/repo.git
+        username:
+          type: string
+        token:
+          type: string
+          description: Personal access token for private repositories
+        target_dir:
+          type: string
+          description: Local directory name to sync into
+          example: my-repo
+
+    # ── S3 ───────────────────────────────────────────────────────────────────
+    S3Request:
+      type: object
+      required: [endpoint, bucket, region, access_key, secret_key]
+      properties:
+        endpoint:
+          type: string
+          example: s3.amazonaws.com
+        bucket:
+          type: string
+          example: my-bucket
+        region:
+          type: string
+          example: us-east-1
+        access_key:
+          type: string
+        secret_key:
+          type: string
+        use_ssl:
+          type: boolean
+          default: true
+        object_name:
+          type: string
+          description: Required for upload, download, and delete
+          example: path/to/object.tar.gz
+        payload:
+          type: string
+          format: byte
+          description: Base64-encoded file contents (upload only)
+
+    # ── WireGuard ────────────────────────────────────────────────────────────
+    PeerRequest:
+      type: object
+      required: [public_key, endpoint, allowed_ips]
+      properties:
+        public_key:
+          type: string
+          description: WireGuard public key (base64)
+          example: abc123==
+        endpoint:
+          type: string
+          description: Peer endpoint in host:port format
+          example: 203.0.113.2:51820
+        allowed_ips:
+          type: string
+          description: Comma-separated CIDR ranges
+          example: 10.0.0.2/32
+
+    # ── Plugins ──────────────────────────────────────────────────────────────
+    LoadPluginRequest:
+      type: object
+      required: [name, path]
+      properties:
+        name:
+          type: string
+          example: my-plugin
+        path:
+          type: string
+          example: /app/plugins/my-plugin.wasm
+
+    # ── Users ─────────────────────────────────────────────────────────────────
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          example: usr_01j8z3k
+        username:
+          type: string
+          example: alice
+        roles:
+          type: array
+          items:
+            type: string
+          example: [admin]
+        created_at:
+          type: string
+          format: date-time
+
+    APIKeyRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          example: ci-key
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: alice
+        password:
+          type: string
+          minLength: 12
+          example: supersecret123
+        roles:
+          type: array
+          items:
+            type: string
+          description: Role names to assign
+          example: [developer]
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          minLength: 12
+        roles:
+          type: array
+          items:
+            type: string
+
+    # ── Roles ─────────────────────────────────────────────────────────────────
+    RoleRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          example: role_developer
+        name:
+          type: string
+          example: developer
+        description:
+          type: string
+          example: Can deploy containers and read nodes
+        perms:
+          type: array
+          items:
+            type: string
+          example: [docker:write, nodes:read]
+
+    CreateRoleRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: developer
+        description:
+          type: string
+        perms:
+          type: array
+          items:
+            type: string
+          example: [docker:write, nodes:read]
+
+    UpdateRoleRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        perms:
+          type: array
+          items:
+            type: string
+
+    # ── Nodes ─────────────────────────────────────────────────────────────────
+    NodeRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          example: n_core01
+        name:
+          type: string
+          example: core-01
+        type:
+          type: string
+          enum: [hub, edge, hub+edge]
+          example: hub
+        address:
+          type: string
+          example: 10.0.0.1:51820
+        public_key:
+          type: string
+          example: abc123==
+
+    CreateNodeRequest:
+      type: object
+      required: [name, type, address, public_key]
+      properties:
+        name:
+          type: string
+          example: core-01
+        type:
+          type: string
+          enum: [hub, edge, hub+edge]
+          example: hub
+        address:
+          type: string
+          example: 10.0.0.1:51820
+        public_key:
+          type: string
+          example: abc123==
+
+    # ── Sync ─────────────────────────────────────────────────────────────────
+    RegisterEdgeRequest:
+      type: object
+      required: [node_id, url]
+      properties:
+        node_id:
+          type: string
+          example: edge-node-01
+        url:
+          type: string
+          description: Sync endpoint URL on the edge node
+          example: https://edge01.example.com/sync
+        token:
+          type: string
+          description: Optional HMAC auth token
+
+    PushResponse:
+      type: object
+      properties:
+        success:
+          type: integer
+          description: Number of edges successfully synced
+        failed:
+          type: integer
+          description: Number of edges that failed
+        total:
+          type: integer
+
+    # ── Recovery ─────────────────────────────────────────────────────────────
+    GenerateSharesRequest:
+      type: object
+      required: [master_key]
+      properties:
+        master_key:
+          type: string
+          description: Hex-encoded master key to split
+          example: 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+
+    GenerateSharesResponse:
+      type: object
+      properties:
+        shares:
+          type: array
+          items:
+            type: string
+          description: Shamir secret shares — distribute to separate custodians
+          example:
+            - "scutum-erk-v1-1-abc..."
+            - "scutum-erk-v1-2-def..."
+
+    RecoverRequest:
+      type: object
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          minItems: 4
+          items:
+            type: string
+          description: At least 4 Shamir shares are required
+
+    RecoverResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        new_shares:
+          type: array
+          items:
+            type: string
+          description: Fresh shares for the newly generated master key
+
+    ReissueRequest:
+      type: object
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          minItems: 4
+          items:
+            type: string
+
+    ReissueResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        new_shares:
+          type: array
+          items:
+            type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Authenticated but insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadRequest:
+      description: Invalid request body or parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+paths:
+  # ── Health ────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      description: Returns `{"status":"up"}` when the server is running.
+      security: []
+      responses:
+        '200':
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: up
+
+  # ── Version ───────────────────────────────────────────────────────────────
+  /version:
+    get:
+      tags: [Version]
+      summary: Build version info
+      description: Returns the binary version, build date, and VCS commit hash.
+      security: []
+      responses:
+        '200':
+          description: Version info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                    example: v1.0.0
+                  build:
+                    type: string
+                    example: "2026.04"
+                  commit:
+                    type: string
+                    example: a3f9c12
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: Creates a new local user account. Password must be at least 12 characters.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Username already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Obtain a JWT token
+      description: Authenticates with username and password. Returns a JWT valid for 24 hours.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/keys:
+    post:
+      tags: [Auth]
+      summary: Create an API key
+      description: |
+        Creates a long-lived API key for the authenticated user.
+        The raw key is returned **once** — store it securely.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        '201':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAPIKeyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Auth (authenticated) ──────────────────────────────────────────────────
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user profile
+      description: Returns the profile of the currently authenticated user.
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/tokens:
+    get:
+      tags: [Auth]
+      summary: List API keys
+      description: Lists all API keys belonging to the current user.
+      responses:
+        '200':
+          description: API key list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/APIKeyRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/tokens/{id}:
+    delete:
+      tags: [Auth]
+      summary: Revoke an API key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: API key ID to revoke
+      responses:
+        '204':
+          description: Key revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Users ─────────────────────────────────────────────────────────────────
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Users]
+      summary: Create a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Get a user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Users]
+      summary: Update a user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '204':
+          description: Updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Users]
+      summary: Delete a user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Roles ─────────────────────────────────────────────────────────────────
+  /roles:
+    get:
+      tags: [Roles]
+      summary: List all roles
+      responses:
+        '200':
+          description: Role list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RoleRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Roles]
+      summary: Create a role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+      responses:
+        '201':
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /roles/{id}:
+    put:
+      tags: [Roles]
+      summary: Update a role
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleRequest'
+      responses:
+        '204':
+          description: Updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Roles]
+      summary: Delete a role
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Setup ─────────────────────────────────────────────────────────────────
+  /setup/status:
+    get:
+      tags: [Setup]
+      summary: Check setup status
+      description: Returns whether initial setup has been completed.
+      responses:
+        '200':
+          description: Setup status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /setup:
+    post:
+      tags: [Setup]
+      summary: Run initial setup
+      description: |
+        Performs the one-time installation: creates the admin user, configures
+        the KMS provider, and optionally initialises the WireGuard interface.
+        Requires `admin/admin` permission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupRequest'
+      responses:
+        '200':
+          description: Setup completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /setup/test-kms:
+    post:
+      tags: [Setup]
+      summary: Validate KMS configuration
+      description: Performs a round-trip encrypt/decrypt test against the supplied KMS config.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KMSConfig'
+      responses:
+        '200':
+          description: KMS round-trip succeeded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── Nodes ─────────────────────────────────────────────────────────────────
+  /nodes:
+    get:
+      tags: [Nodes]
+      summary: List mesh nodes
+      responses:
+        '200':
+          description: Node list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NodeRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Nodes]
+      summary: Register a node
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNodeRequest'
+      responses:
+        '201':
+          description: Node registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /nodes/{id}:
+    get:
+      tags: [Nodes]
+      summary: Get a node
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Nodes]
+      summary: Remove a node
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Docker ────────────────────────────────────────────────────────────────
+  /docker/containers:
+    get:
+      tags: [Docker]
+      summary: List all containers
+      description: Returns all containers (running and stopped).
+      responses:
+        '200':
+          description: Container list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Docker container summary (raw Docker API object)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /docker/deploy:
+    post:
+      tags: [Docker]
+      summary: Deploy a container
+      description: Pulls the specified image and starts a new container with the given configuration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeployRequest'
+      responses:
+        '200':
+          description: Container started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /docker/containers/{id}/start:
+    post:
+      tags: [Docker]
+      summary: Start a container
+      parameters:
+        - $ref: '#/components/parameters/ContainerID'
+      responses:
+        '200':
+          description: Container started
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /docker/containers/{id}/stop:
+    post:
+      tags: [Docker]
+      summary: Stop a container
+      parameters:
+        - $ref: '#/components/parameters/ContainerID'
+      responses:
+        '200':
+          description: Container stopped
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /docker/containers/{id}/restart:
+    post:
+      tags: [Docker]
+      summary: Restart a container
+      parameters:
+        - $ref: '#/components/parameters/ContainerID'
+      responses:
+        '200':
+          description: Container restarted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /docker/containers/{id}:
+    delete:
+      tags: [Docker]
+      summary: Delete a container
+      parameters:
+        - $ref: '#/components/parameters/ContainerID'
+      responses:
+        '200':
+          description: Container deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /docker/containers/{id}/stats:
+    get:
+      tags: [Docker]
+      summary: Stream container stats
+      description: Returns a stream of real-time resource usage statistics (CPU, memory, network).
+      parameters:
+        - $ref: '#/components/parameters/ContainerID'
+      responses:
+        '200':
+          description: Stats stream (newline-delimited JSON)
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Docker stats object (streamed)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /docker/containers/{id}/logs:
+    get:
+      tags: [Docker]
+      summary: Stream container logs
+      description: Returns a stream of container log output (Docker multiplexed format).
+      parameters:
+        - $ref: '#/components/parameters/ContainerID'
+      responses:
+        '200':
+          description: Log stream
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /docker/containers/{id}/terminal:
+    get:
+      tags: [Docker]
+      summary: Open an interactive terminal (WebSocket)
+      description: |
+        Upgrades to a WebSocket connection and opens an interactive `/bin/sh`
+        session inside the running container.
+      parameters:
+        - $ref: '#/components/parameters/ContainerID'
+      responses:
+        '101':
+          description: WebSocket upgrade — interactive shell session
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Kubernetes ────────────────────────────────────────────────────────────
+  /kubernetes/{ns}/deploy:
+    post:
+      tags: [Kubernetes]
+      summary: Create a deployment
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/K8sDeployRequest'
+      responses:
+        '200':
+          description: Deployment created
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /kubernetes/{ns}/deployments/{name}/scale:
+    post:
+      tags: [Kubernetes]
+      summary: Scale a deployment
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/DeploymentName'
+        - name: replicas
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+          description: Desired replica count
+      responses:
+        '200':
+          description: Deployment scaled
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /kubernetes/{ns}/deployments/{name}/restart:
+    post:
+      tags: [Kubernetes]
+      summary: Rollout restart a deployment
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/DeploymentName'
+      responses:
+        '200':
+          description: Restart triggered
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /kubernetes/{ns}/pods/{name}:
+    delete:
+      tags: [Kubernetes]
+      summary: Delete a pod
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Pod name
+      responses:
+        '200':
+          description: Pod deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /kubernetes/events:
+    get:
+      tags: [Kubernetes]
+      summary: Watch cluster events (streaming)
+      description: Streams Kubernetes events as newline-delimited JSON.
+      responses:
+        '200':
+          description: Event stream
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Kubernetes event object (streamed)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /k8s/{namespace}/{pod}/terminal:
+    get:
+      tags: [Kubernetes]
+      summary: Open a pod terminal (WebSocket)
+      description: |
+        Upgrades to a WebSocket connection using the Kubernetes exec protocol
+        to open an interactive shell in a running pod.
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pod
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '101':
+          description: WebSocket upgrade — interactive shell session
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Git ───────────────────────────────────────────────────────────────────
+  /git/sync:
+    post:
+      tags: [Git]
+      summary: Sync a Git repository
+      description: Clones or pulls a repository into the specified local directory.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GitSyncRequest'
+      responses:
+        '200':
+          description: Sync successful
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Sync successful
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── Storage ───────────────────────────────────────────────────────────────
+  /storage/s3/upload:
+    post:
+      tags: [Storage]
+      summary: Upload an object
+      description: Uploads a Base64-encoded payload to the specified S3-compatible bucket.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/S3Request'
+      responses:
+        '200':
+          description: Upload result (proxied S3 response)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /storage/s3/download:
+    post:
+      tags: [Storage]
+      summary: Download an object
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/S3Request'
+      responses:
+        '200':
+          description: Object contents (proxied S3 response)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /storage/s3/list:
+    post:
+      tags: [Storage]
+      summary: List bucket contents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/S3Request'
+      responses:
+        '200':
+          description: S3 bucket listing (XML)
+          content:
+            application/xml:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /storage/s3/delete:
+    delete:
+      tags: [Storage]
+      summary: Delete an object
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/S3Request'
+      responses:
+        '200':
+          description: Object deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Network ───────────────────────────────────────────────────────────────
+  /network/peer:
+    post:
+      tags: [Network]
+      summary: Add a WireGuard peer
+      description: Adds a new peer to the WireGuard interface (`wg0`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PeerRequest'
+      responses:
+        '200':
+          description: Peer added
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: peer added
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /network/status:
+    get:
+      tags: [Network]
+      summary: Get WireGuard status
+      description: Returns the raw output of `wg show wg0 dump`.
+      responses:
+        '200':
+          description: WireGuard status dump
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Plugins ───────────────────────────────────────────────────────────────
+  /plugins:
+    get:
+      tags: [Plugins]
+      summary: List loaded plugins
+      responses:
+        '200':
+          description: Plugin list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    path:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /plugins/load:
+    post:
+      tags: [Plugins]
+      summary: Load a plugin
+      description: Loads a WASM plugin binary and registers its HTTP routes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoadPluginRequest'
+      responses:
+        '200':
+          description: Plugin loaded
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /plugins/upload:
+    post:
+      tags: [Plugins]
+      summary: Upload and load a WASM plugin
+      description: |
+        Accepts a multipart form upload of a `.wasm` binary, saves it to the
+        plugins directory, and immediately loads it into the WASM sandbox.
+        The plugin name is used as the route prefix and must be unique.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, name]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: WASM binary (.wasm)
+                name:
+                  type: string
+                  description: Unique plugin name
+                description:
+                  type: string
+                  description: Optional human-readable description
+      responses:
+        '201':
+          description: Plugin uploaded and loaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  path:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /plugins/{name}:
+    delete:
+      tags: [Plugins]
+      summary: Unload a plugin
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Plugin name to unload
+      responses:
+        '200':
+          description: Plugin unloaded
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Sync ──────────────────────────────────────────────────────────────────
+  /sync/register-edge:
+    post:
+      tags: [Sync]
+      summary: Register an edge node
+      description: |
+        Adds a remote edge node as a sync target. Subsequent calls to
+        `POST /sync/push` will distribute configuration to this node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterEdgeRequest'
+      responses:
+        '200':
+          description: Edge registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: registered
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /sync/push:
+    post:
+      tags: [Sync]
+      summary: Push config to all edge nodes
+      description: |
+        Collects the current peer list and enabled plugin set from the database
+        and distributes them to all registered edge nodes via HMAC-signed payloads.
+      responses:
+        '200':
+          description: Push results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Recovery ──────────────────────────────────────────────────────────────
+  /recovery/generate-shares:
+    post:
+      tags: [Recovery]
+      summary: Split master key into Shamir shares
+      description: |
+        Splits the provided master key into 5 Shamir secret shares with a
+        threshold of 4. Distribute shares to separate custodians for offline storage.
+        **Nothing is retained server-side after this call.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateSharesRequest'
+      responses:
+        '200':
+          description: Shares generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateSharesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /recovery/recover:
+    post:
+      tags: [Recovery]
+      summary: Emergency key recovery
+      description: |
+        Full emergency recovery workflow:
+        1. Reconstructs the old master key from at least 4 shares.
+        2. Verifies it against the stored digest.
+        3. Generates a new master key.
+        4. Re-encrypts all DEKs under the new key.
+        5. Returns fresh shares for the new key.
+
+        **The old shares are invalidated after this call.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoverRequest'
+      responses:
+        '200':
+          description: Recovery successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoverResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /recovery/reissue-shares:
+    post:
+      tags: [Recovery]
+      summary: Reissue shares without key rotation
+      description: |
+        Reconstructs the current master key from existing shares and re-splits it
+        into 5 fresh shares. Use this when a share holder leaves or a share is
+        suspected compromised. No DEKs are re-encrypted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReissueRequest'
+      responses:
+        '200':
+          description: Shares reissued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReissueResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── API Docs ──────────────────────────────────────────────────────────────
+  /docs:
+    get:
+      tags: [Health]
+      summary: Scalar API reference UI
+      description: Interactive API documentation powered by Scalar.
+      security: []
+      responses:
+        '200':
+          description: HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /openapi.yaml:
+    get:
+      tags: [Health]
+      summary: OpenAPI specification
+      security: []
+      responses:
+        '200':
+          description: OpenAPI 3.0 YAML document
+          content:
+            application/yaml:
+              schema:
+                type: string

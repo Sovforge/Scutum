@@ -1,0 +1,160 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+/* ── Theme variables ──────────────────────────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --bg-base:     #0a0a0f;
+  --bg-deep:     #07070f;
+  --bg-surface:  #0f0f18;
+  --bg-elevated: #13131f;
+  --bg-overlay:  #1a1a2e;
+
+  /* Borders */
+  --border:        #1e1e2e;
+  --border-strong: #2d2d44;
+  --border-hover:  #3a3a5e;
+  --border-subtle: rgba(30, 30, 46, 0.267);
+  --border-faint:  rgba(30, 30, 46, 0.039);
+
+  /* Text */
+  --text-primary:   #e2e8f0;
+  --text-secondary: #cbd5e1;
+  --text-tertiary:  #94a3b8;
+  --text-muted:     #64748b;
+  --text-dim:       #475569;
+  --text-subtle:    #334155;
+
+  /* Hover overlays */
+  --hover-bg:     rgba(255, 255, 255, 0.04);
+  --hover-subtle: rgba(255, 255, 255, 0.02);
+
+  /* Accent — violet */
+  --accent:          #7c3aed;
+  --accent-light:    #a78bfa;
+  --accent-hover:    #6d28d9;
+  --accent-secondary:#4f46e5;
+  --accent-soft:     rgba(124, 58, 237, 0.267);
+  --accent-tint:     rgba(124, 58, 237, 0.200);
+  --accent-subtle:   rgba(124, 58, 237, 0.133);
+  --accent-bg:       rgba(124, 58, 237, 0.078);
+  --accent-dim:      rgba(124, 58, 237, 0.047);
+
+  /* Success */
+  --success:       #22c55e;
+  --success-light: #4ade80;
+  --success-glow:  rgba(34, 197, 94, 0.40);
+  --success-dim:   rgba(34, 197, 94, 0.13);
+
+  /* Warning */
+  --warning:        #f59e0b;
+  --warning-bg:     rgba(146, 64, 14, 0.133);
+  --warning-border: rgba(146, 64, 14, 0.267);
+
+  /* Danger */
+  --danger:         #ef4444;
+  --danger-light:   #f87171;
+  --danger-lighter: #fca5a5;
+  --danger-glow:    rgba(239, 68, 68, 0.533);
+  --danger-bg:      rgba(127, 29, 29, 0.133);
+  --danger-border:  rgba(127, 29, 29, 0.267);
+
+  /* RBAC role badge colors */
+  --role-admin-bg:     rgba(107, 33, 168, 0.133);
+  --role-admin-border: rgba(107, 33, 168, 0.267);
+  --role-op-bg:        rgba(30, 64, 175, 0.133);
+  --role-op-border:    rgba(30, 64, 175, 0.267);
+  --role-dev-bg:       rgba(21, 128, 61, 0.133);
+  --role-dev-border:   rgba(21, 128, 61, 0.267);
+  --role-gray-bg:      #1e293b;
+
+  /* Shadows */
+  --shadow-lg: rgba(0, 0, 0, 0.50);
+  --shadow-md: rgba(0, 0, 0, 0.30);
+}
+
+[data-theme="light"] {
+  /* Backgrounds */
+  --bg-base:     #f1f5f9;
+  --bg-deep:     #e2e8f0;
+  --bg-surface:  #ffffff;
+  --bg-elevated: #f8fafc;
+  --bg-overlay:  #f1f5f9;
+
+  /* Borders */
+  --border:        #e2e8f0;
+  --border-strong: #cbd5e1;
+  --border-hover:  #94a3b8;
+  --border-subtle: rgba(148, 163, 184, 0.35);
+  --border-faint:  rgba(148, 163, 184, 0.12);
+
+  /* Text */
+  --text-primary:   #0f172a;
+  --text-secondary: #1e293b;
+  --text-tertiary:  #475569;
+  --text-muted:     #64748b;
+  --text-dim:       #94a3b8;
+  --text-subtle:    #94a3b8;
+
+  /* Hover overlays */
+  --hover-bg:     rgba(0, 0, 0, 0.04);
+  --hover-subtle: rgba(0, 0, 0, 0.02);
+
+  /* Accent — same purple */
+  --accent:          #7c3aed;
+  --accent-light:    #6d28d9;
+  --accent-hover:    #5b21b6;
+  --accent-secondary:#4f46e5;
+  --accent-soft:     rgba(124, 58, 237, 0.22);
+  --accent-tint:     rgba(124, 58, 237, 0.16);
+  --accent-subtle:   rgba(124, 58, 237, 0.10);
+  --accent-bg:       rgba(124, 58, 237, 0.07);
+  --accent-dim:      rgba(124, 58, 237, 0.04);
+
+  /* Success */
+  --success:       #16a34a;
+  --success-light: #22c55e;
+  --success-glow:  rgba(22, 163, 74, 0.35);
+  --success-dim:   rgba(22, 163, 74, 0.10);
+
+  /* Warning */
+  --warning:        #d97706;
+  --warning-bg:     rgba(217, 119, 6, 0.08);
+  --warning-border: rgba(217, 119, 6, 0.22);
+
+  /* Danger */
+  --danger:         #dc2626;
+  --danger-light:   #ef4444;
+  --danger-lighter: #fca5a5;
+  --danger-glow:    rgba(220, 38, 38, 0.30);
+  --danger-bg:      rgba(220, 38, 38, 0.07);
+  --danger-border:  rgba(220, 38, 38, 0.22);
+
+  /* RBAC role badge colors */
+  --role-admin-bg:     rgba(107, 33, 168, 0.08);
+  --role-admin-border: rgba(107, 33, 168, 0.20);
+  --role-op-bg:        rgba(30, 64, 175, 0.08);
+  --role-op-border:    rgba(30, 64, 175, 0.20);
+  --role-dev-bg:       rgba(21, 128, 61, 0.08);
+  --role-dev-border:   rgba(21, 128, 61, 0.20);
+  --role-gray-bg:      #e2e8f0;
+
+  /* Shadows */
+  --shadow-lg: rgba(0, 0, 0, 0.10);
+  --shadow-md: rgba(0, 0, 0, 0.06);
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.2s, color 0.2s;
+}
+
+a { color: inherit; }
+button { font-family: inherit; }

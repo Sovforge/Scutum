@@ -1,0 +1,40 @@
+services:
+  scutum:
+    build: .
+    network_mode: host
+
+    cap_add:
+      - NET_ADMIN
+
+    devices:
+      - /dev/net/tun
+
+    volumes:
+      - scutum_data:/data
+      - ./secrets:/secrets
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    restart: unless-stopped
+
+    environment:
+      DATA_DIR: /data
+      SECRETS_DIR: /secrets
+      PORT: "8080"
+      CERT_FILE: /secrets/server.crt
+      KEY_FILE: /secrets/server.key
+      AUDIT_RETENTION_DAYS: "365"
+      HEALER_INTERVAL: 30s
+      LOG_LEVEL: info
+      AUDIT_ENABLED: "true"
+      # DATABASE_URL: postgres://user:pass@host:5432/scutum  # omit for SQLite
+      # CA_CERT_FILE: /secrets/ca.crt                        # enables mTLS if set
+
+    healthcheck:
+      test: ["CMD", "curl", "-fk", "https://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  scutum_data:

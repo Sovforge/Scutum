@@ -1,27 +1,68 @@
-# ---> Go
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# ── Binaries ─────────────────────────────────────────────────
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+sovran
+tests.test
 
-# Test binary, built with `go test -c`
+# ── Test & coverage ──────────────────────────────────────────
 *.test
-
-# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+coverage.out
+coverage.html
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
+# ── Go workspace ─────────────────────────────────────────────
 go.work
 go.work.sum
 
-# env file
+# ── Environment ──────────────────────────────────────────────
 .env
+.env.*
 
+# ── Secrets & keys ───────────────────────────────────────────
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+kms.toml
+
+# ── SQLite ───────────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+
+# ── Runtime data & secrets (created by docker-compose) ───────
+data/
+secrets/
+sovran_data/
+sovran_secrets/
+edge_data/
+edge_secrets/
+
+# ── Build artifacts ──────────────────────────────────────────
+cmd/api/dist/*
+!cmd/api/dist/index.html
+
+# ── Frontend ─────────────────────────────────────────────────
+frontend/node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/.cache/
+
+# ── Logs ─────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── IDE ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

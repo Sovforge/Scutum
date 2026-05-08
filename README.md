@@ -1,2 +1,415 @@
-# Orcistrator
+<div align="center">
+  <img src="./frontend/public/favicon.png" width="128" height="128" alt="Scutum Logo">
 
+# ⚡ **Scutum**
+### *Your infrastructure. Your control. No permission required.*
+
+**Secure. Peer-to-peer. Zero cloud dependencies.**  
+*A single binary that shields your infrastructure from vendor lock-in and SaaS control planes.*
+</div>
+
+---
+
+> **Scutum replaces fragmented infrastructure tools with a single peer-to-peer control plane for securely connecting and managing infrastructure—without cloud dependencies.**
+
+### Use Scutum if you:
+
+- **Run the stack sprawl:** You're tired of juggling Tailscale + Docker + random dashboards.
+- **Are trapped behind NAT:** You need to connect nodes without exposing ports to the public internet.
+- **Refuse the "Cloud Tax":** You want to deploy workloads without relying on a third-party control plane.
+- **Build at the Edge:** You're creating air-gapped or high-latency systems that need local autonomy.
+
+<details>
+<summary><b>📖 Table of Contents</b> (click to expand)</summary>
+
+- [⚡ Quick Start](#the-2-node-quick-start-under-60-seconds)
+- [🌐 Overview](#overview)
+- [🧩 Core Concepts](#core-concepts)
+- [🏗️ Architecture](#architecture)
+- [🎯 Who is Scutum for?](#who-is-scutum-for)
+- [✨ Key Features](#key-features)
+- [💎 Scutum vs. The World](#scutum-vs-the-world-why-choose-sovereignty)
+- [🚀 Getting Started](#getting-started)
+  - [Running Outside Docker (Advanced)](#running-outside-docker-advanced)
+- [🛡️ The Scutum Advantage](#the-sovereign-advantage)
+- [🔌 Plugin System](#plugin-system)
+- [📡 API Quick Reference](#api-quick-reference)
+- [🗺️ Roadmap](#roadmap)
+- [🏢 Enterprise & Commercial Use](#enterprise--commercial-use)
+- [🛡️ Supply Chain Security](#supply-chain-security-cra-compliance)
+- [💬 Community & Support](#community--support)
+- [📈 Node Scaling Philosophy](#node-scaling-philosophy)
+- [📜 License](#license)
+
+</details>
+
+---
+## ⚡ The 2-Node Quick Start (Under 60 Seconds)
+
+Bridge a VPS and your local machine in under a minute.
+
+### 0. Generate TLS Certificates
+
+Scutum serves its UI and API over HTTPS. Before launching, generate a self-signed certificate for your hub:
+
+```bash
+mkdir -p secrets
+
+# CA
+openssl genrsa -out secrets/ca.key 4096
+openssl req -new -x509 -days 3650 -key secrets/ca.key -out secrets/ca.crt -subj "/CN=scutum-ca"
+
+# Server cert signed by the CA
+openssl genrsa -out secrets/server.key 4096
+openssl req -new -key secrets/server.key -out secrets/server.csr -subj "/CN=localhost"
+openssl x509 -req -days 825 -in secrets/server.csr \
+  -CA secrets/ca.crt -CAkey secrets/ca.key -CAcreateserial \
+  -extfile <(printf "subjectAltName=DNS:localhost,IP:127.0.0.1") \
+  -out secrets/server.crt
+rm secrets/server.csr secrets/ca.srl
+chmod 600 secrets/*.key
+```
+
+> **Tip:** Replace `IP:127.0.0.1` with your VPS's public IP so browsers trust the cert without a warning. For production, use a cert from Let's Encrypt or your own CA.
+
+---
+
+### 1. Launch the Hub (Public VPS)
+
+```bash
+docker run -d \
+  --name scutum \
+  --network host \
+  --cap-add NET_ADMIN \
+  --device /dev/net/tun \
+  -v scutum_data:/data \
+  -v $(pwd)/secrets:/secrets \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  --restart unless-stopped \
+  -e DATA_DIR=/data \
+  -e SECRETS_DIR=/secrets \
+  -e PORT=8080 \
+  -e CERT_FILE=/secrets/server.crt \
+  -e KEY_FILE=/secrets/server.key \
+  -e AUDIT_ENABLED=true \
+  --health-cmd "curl -fk https://localhost:8080/api/health" \
+  --health-interval 30s \
+  --health-timeout 5s \
+  --health-start-period 10s \
+  --health-retries 3 \
+  ghcr.io/Sovforge/scutum:latest
+```
+
+Open the UI in your browser (accept the self-signed cert warning):
+
+```
+https://<your-vps-ip>:8080
+```
+
+Complete the setup wizard on first launch.
+
+---
+
+### 2. Start a Remote Node (Your Laptop)
+
+```bash
+docker run -d \
+  --name scutum-agent \
+  --network host \
+  --cap-add NET_ADMIN \
+  --device /dev/net/tun \
+  -v scutum_agent_data:/data \
+  -v $(pwd)/secrets:/secrets \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  --restart unless-stopped \
+  -e DATA_DIR=/data \
+  -e SECRETS_DIR=/secrets \
+  -e PORT=8081 \
+  -e CERT_FILE=/secrets/server.crt \
+  -e KEY_FILE=/secrets/server.key \
+  ghcr.io/Sovforge/scutum:latest
+```
+
+The agent will start. Note its **node address** (`host:port`) from the logs — you'll need it when registering the node in the hub UI.
+
+---
+
+### 3. Register & Approve the Node (UI)
+
+* Open the **Scutum UI** on your VPS
+* Navigate to **Nodes** → **Add Node**
+* Enter the agent's address as `<laptop-ip>:8081` and approve it
+
+---
+
+### 4. Verify the Mesh
+
+Within minutes, both nodes should appear connected in the UI and begin routing traffic through an encrypted WireGuard mesh.
+
+---
+
+### ✅ What you now have
+
+* A private encrypted network between your machines — no exposed ports, no third-party control plane
+* Docker and Kubernetes actions from the hub UI forwarded to any registered node via `X-Target-Node` header
+
+---
+
+## 🌐 Overview
+
+Scutum is a decentralized mesh controller designed to form a fully encrypted P2P mesh across your infrastructure. By eliminating SaaS control planes, relays, and telemetry, Scutum ensures that your network management remains private, secure, and entirely under your control.
+
+It is a single statically-linked binary designed for engineers who want to manage their infrastructure, not the tools that manage it.
+
+## 🧩 Core Concepts
+
+- **Hub**: A node with a public IP that coordinates P2P introductions and NAT traversal. Any $5/mo VPS works — the Hub signals peers but does not relay traffic once the mesh is up.
+- **Remote**: A node (behind NAT/Firewall) that establishes outbound-only connections to a Hub.
+- **Mesh**: The WireGuard-based encrypted overlay connecting all nodes.
+- **Store**: The encrypted state engine (SQLite/Postgres) residing within your perimeter.
+- **Agent**: The background process on each node that reconciles workloads.
+- **Enrollment**: Nodes are admitted by **manual approval only**. A Remote generates a node ID on first start; an admin approves it via the UI before any mesh keys are issued. No node is ever auto-trusted.
+
+## 🏗️ Architecture
+
+Scutum turns any set of nodes into an encrypted mesh. Unlike traditional VPNs, there is no central relay—data and control flow directly between peers.
+
+**The Hub Requirement:** To facilitate P2P connections without relying on third-party STUN/TURN services, at least one node (the **Hub**) must have a **publicly accessible IP**. The Hub acts as the signaling point to allow peers behind CGNAT or strict firewalls to find each other. Once connected, traffic is strictly P2P.
+
+*Multiple Hubs can be designated for High-Availability (HA) mesh coordination.*
+
+```mermaid
+graph TD
+    subgraph Internet
+        HUB["🖥️ Hub Node<br/>(Public IP · Signaling)"]
+    end
+
+    subgraph Site A ["Site A (NAT/CGNAT)"]
+        RA["🔒 Remote A"]
+    end
+
+    subgraph Site B ["Site B (NAT/CGNAT)"]
+        RB["🔒 Remote B"]
+    end
+
+    UI["🖱️ Control UI"]
+
+    UI -- "1. Enroll & approve" --> HUB
+    RA -- "2. Outbound handshake" --> HUB
+    RB -- "2. Outbound handshake" --> HUB
+    HUB -. "3. Exchange WireGuard keys" .-> RA
+    HUB -. "3. Exchange WireGuard keys" .-> RB
+    RA == "4. Direct P2P · WireGuard · E2E Encrypted" == RB
+```
+
+> The Hub brokers the initial handshake only. Once peers have exchanged keys, all data flows directly between them — the Hub is not in the data path.
+
+## 🎯 Who is Scutum for?
+
+- **Security-Conscious Orgs:** Need to meet strict compliance (CRA, HIPAA) without third-party data transit.
+- **Infrastructure Engineers:** Tired of SaaS vendor lock-in and "black box" control planes.
+- **Edge & IoT Operators:** Need a mesh that functions in air-gapped or high-latency environments.
+- **Consolidated Operators:** Looking for a **"Single Pane of Glass"** experience to manage networking, workloads, and logs without jumping between multiple vendor dashboards.
+
+## ✨ Key Features
+
+- **Multi-Runtime Orchestration**: Native support for managing **Docker** containers and **Kubernetes** pods across the mesh from a single interface.
+- **Integrated Management UI**: No separate dashboard or web server to install; the management interface is built directly into the core binary.
+- **Secure P2P Mesh**: Uses WireGuard to establish encrypted, high-performance tunnels between all nodes.
+- **Zero-Trust Enrollment**: Security is enforced through **explicit manual enrollment**. Nodes are never auto-discovered or auto-trusted.
+- **Enterprise Key Management (KMS)**: Secure master keys via HashiCorp Vault, AWS KMS, GCP, or Azure.
+- **Emergency Recovery**: Uses **Shamir's Secret Sharing (SSS)** for local KMS to split master keys into multiple recovery shares.
+- **Database Agnostic**: Supports encrypted **SQLite** for the edge, plus **PostgreSQL** and **MySQL** for HA clusters.
+- **Forensic Observability**: Native OpenTelemetry integration for live logs, metrics, and distributed P2P traces.
+- **Live Terminal**: Web-based `exec` access to both **Docker containers** and **Kubernetes pods**, routed directly through the mesh.
+
+---
+
+## 💎 Scutum vs. The World: Why Self-Host Your Control Plane?
+
+Tailscale and Headscale are fantastic for secure network overlays. However, they are primarily network-focused. You still need separate tools for deploying applications, managing state, and collecting telemetry. **Scutum is an orchestration-first platform.** It integrates networking, workload deployment, state management, and observability into a true **"Single Pane of Glass"** experience, all within your control.
+
+### vs. Nomad / Kubernetes (Orchestration)
+Kubernetes is the industry standard for cloud-native orchestration but comes with significant operational overhead (ETCD, complex control plane networking, Ingress controllers). Nomad offers simplicity but still requires external components for networking and state. **Scutum is a single binary** that provides GitOps-driven OCI and Kubernetes deployment, making it ideal for edge, air-gapped, or sovereign infrastructure where simplicity and self-containment are paramount.
+
+Manual VPN configurations are secure but quickly become an operational nightmare at scale. Managing peer keys, IP addresses, and routing tables for dozens or hundreds of nodes is time-consuming and error-prone. **Scutum automates the P2P overlay** with built-in key management and peer configuration, while strictly enforcing manual enrollment for security. This gives you the security of a manually configured setup with the agility and scalability of a modern mesh controller.
+
+### vs. Cloud-Managed Orchestration (e.g., AWS ECS, Azure Container Apps)
+Cloud-managed services offer convenience but introduce vendor lock-in, reliance on SaaS control planes, and often opaque telemetry. Your data and control plane reside on someone else's infrastructure. **Scutum brings the entire control plane within your perimeter.** It eliminates all cloud dependencies, ensuring full data sovereignty, air-gap capability, and complete control over your infrastructure's operational data.
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Docker**: The only requirement for deployment.
+- **Public IP**: At least one node (the Hub) requires a public-facing IP to coordinate the mesh. Any minimal VPS ($5/mo DigitalOcean, Hetzner CX11, etc.) is sufficient — the Hub signals peers but does not relay data traffic.
+- **Kernel Module (Optional)**: For maximum performance, ensure `wireguard` is loaded on the host. If missing, the container automatically installs and configures `wireguard-go` as a fallback.
+
+### Multi-Runtime Workload Deployment
+Scutum supports deploying declarative stacks using a **GitOps workflow**. Simply point the control plane to your repository, and the agents will reconcile the state of your **Docker** (Compose-style) and **Kubernetes** (Pod/Manifest) workloads directly through the mesh.
+
+---
+
+### Running Outside Docker (Advanced)
+
+> ⚠️ **This is not the recommended way to run Scutum.** Docker handles all system dependencies, privilege requirements, and networking automatically. Running the binary directly is intended for development or environments where Docker is not available. **Several features may not work** depending on your system configuration.
+
+#### What may not work
+
+| Feature | Requirement | Notes |
+| :--- | :--- | :--- |
+| **WireGuard mesh** | `wireguard` kernel module or `wireguard-go` installed + root / `CAP_NET_ADMIN` | Without elevated privileges the interface cannot be created |
+| **iptables / routing** | Root or `CAP_NET_ADMIN` | Required for mesh traffic to route correctly |
+| **Docker management** | `/var/run/docker.sock` accessible to the process | Run as root or add your user to the `docker` group |
+| **Kubernetes management** | Valid `~/.kube/config` | Must point to a reachable cluster |
+| **WireGuard auto-install** | Root + internet access | Falls back gracefully if it cannot install |
+
+#### Prerequisites
+
+- Go 1.25+ and Node 20+ (to build from source)
+- `iproute2` and `wireguard-tools` installed on the host
+- Root or `CAP_NET_ADMIN` capability if you want the mesh to function
+
+#### Build and run
+
+```bash
+# 1. Build the frontend and embed it into the binary
+cd frontend
+npm install
+npm run generate
+cp -r .output/public/. ../cmd/api/dist/
+cd ..
+
+# 2. Build the Go binary (CGO_ENABLED=0 produces a fully static binary)
+CGO_ENABLED=0 go build -ldflags="-s -w" -o scutum ./cmd/api
+
+# 3. Run (root required for WireGuard)
+sudo ./scutum
+```
+
+The UI will be available at `http://localhost:8080`. On first launch you will be taken through the setup wizard.
+
+Environment variables:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `PORT` | `8080` | HTTP listen port |
+| `DATA_DIR` | `../data` | Directory for the SQLite database |
+| `SECRETS_DIR` | `../secrets` | Directory for keys and KMS config |
+| `DATABASE_URL` | *(unset — uses SQLite)* | Postgres (`postgres://...`) or MySQL (`mysql://...`) DSN |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+
+---
+
+## 🛡️ The Scutum Advantage
+
+| Feature | SaaS / VPN Vendors | **Scutum** |
+| :--- | :--- | :--- |
+| **Control Plane** | Managed by Vendor (SaaS) | **Owned by You (Local)** |
+| **Networking** | Public Relays / Exit Nodes | **Private P2P WireGuard Mesh** |
+| **Observability** | Third-party Ingestion | **Local OpenTelemetry Streams** |
+| **Dependency** | Internet Required | **Fully Air-Gap Capable** |
+
+---
+
+## 🔌 Plugin System
+
+Scutum keeps the core focused and predictable. Features that are highly environment-specific or niche are handled through the plugin system—so the core stays simple, and you stay flexible.
+
+Scutum includes a secure, capability-scoped **WebAssembly (WASM)** plugin sandbox. Extend the control plane with custom logic, HTTP routes, or automation using TinyGo, Rust, or AssemblyScript.
+👉 [Read the Plugin Guide](PluginGuide.md)
+
+---
+
+## 📡 API Quick Reference
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | System heartbeat + uptime |
+| `POST /terminal/exec` | Start a P2P terminal session |
+| `POST /network/peer` | Add a node to the mesh |
+| `GET /network/status` | View WireGuard topology |
+| `POST /deploy` | Deploy containers or stacks |
+| `GET /logs/stream` | Live log streaming (OTEL) |
+
+---
+
+## 🗺️ Roadmap
+
+| Feature | Status |
+| :--- | :--- |
+| **Single Sign-On (OIDC / SAML)** — Keycloak, Okta, GitHub, Azure AD | 🔜 Planned |
+| **Helm chart & Kubernetes operator** — first-class K8s deployment | 🔜 Planned |
+
+Have a feature request? Open an issue or start a discussion.
+
+---
+
+## 🏢 Enterprise & Commercial Use
+
+Scutum is designed to be a sustainable project. It is **free for personal use, academic institutions, and small businesses** that meet the following criteria:
+- **Small Businesses**: Fewer than 100 total employees/contractors and less than $1,000,000 USD total revenue in the prior tax year.
+- **Academic Institutions**: Accredited universities and non-profit research organizations are granted full usage rights for educational and research purposes.
+
+**Enterprise Use:** If your organization exceeds these thresholds or requires an enterprise-grade SLA, please contact the maintainers to discuss a commercial license.
+
+---
+
+## 🛡️ Supply Chain Security (CRA Compliance)
+
+In accordance with the **EU Cyber Resilience Act (CRA)**, Scutum provides full transparency into its software supply chain. Every release includes a cryptographically verifiable **Software Bill of Materials (SBOM)** to ensure components are auditable and secure.
+
+### SBOM Validation
+You can extract and audit the components within the Scutum image using Syft:
+
+```bash
+# Generate a human-readable list of dependencies
+syft ghcr.io/Sovforge/scutum:latest
+
+# Export SBOM in CycloneDX format for compliance tools
+syft ghcr.io/Sovforge/scutum:latest -o cyclonedx-json > scutum-sbom.json
+```
+
+Official images are also scanned for vulnerabilities. You can perform a local scan using `grype`:
+```bash
+grype ghcr.io/Sovforge/scutum:latest
+```
+
+---
+
+## 💬 Community & Support
+
+Scutum is a solo-authored project — all core code is written and maintained by a single developer. There is no contributor team, and pull requests adding features to the core are not accepted at this time.
+
+That said, your input genuinely shapes the roadmap. If there is something you want to see:
+
+- **Feature requests** — Open a GitHub Issue with the `feature request` label. Describe the problem you are solving, not just the solution.
+- **Bug reports** — Open a GitHub Issue with steps to reproduce and your environment details.
+- **Questions** — Use GitHub Discussions for anything that is not a bug or feature request.
+
+> Scutum is built for the long term. Keeping the core tightly controlled ensures it stays focused, auditable, and secure.
+
+---
+
+## 📈 Node Scaling Philosophy
+Scutum does **not** impose artificial node limits—free or commercial. Real-world limits are determined by your hardware capacity and mesh topology complexity. We prefer honesty over marketing slogans.
+
+<div align="center">
+
+### ✨ *Your infrastructure, armored.*
+
+</div>
+
+## 📋 Changelog
+
+For a full list of additions, changes, and fixes across all releases, see [CHANGELOG.md](CHANGELOG.md).
+
+## 📜 License
+This project is licensed under the PolyForm Small Business License 1.0.0.
+
+*   **Small Business & Academic Use:** Free for qualifying small businesses and accredited academic institutions.
+*   **Enterprise Use:** Requires a separate commercial agreement.
+
+Please see the [LICENSE](LICENSE.md) file for the full legal text.
+
+---
+*Scutum — the shield between your infrastructure and everyone else's control plane.*
