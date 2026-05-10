@@ -233,6 +233,13 @@ onMounted(() => {
   if (canvas.value) resize(canvas.value)
 })
 
+// Re-initialise the simulation whenever the node list changes (e.g. after the
+// API call on the parent page resolves). Without this, initSim runs once on
+// mount with an empty array and the settled flag prevents any further drawing.
+watch(() => props.nodes, () => {
+  if (cw > 0) initSim(cw, ch)
+})
+
 useRafFn(() => {
   const el = canvas.value
   if (!el || cw === 0) return

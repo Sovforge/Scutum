@@ -85,6 +85,8 @@ func (h *DockerHandler) PostDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit("CONTAINER_DEPLOYED", r, "container_id", createResp.ID, "image", req.Repo, "name", req.Name)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(models.DeployResponse{
 		ID:      createResp.ID,
@@ -161,6 +163,7 @@ func (h *DockerHandler) HandleStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	audit("CONTAINER_STARTED", r, "container_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -173,6 +176,7 @@ func (h *DockerHandler) HandleStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	audit("CONTAINER_STOPPED", r, "container_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -185,6 +189,7 @@ func (h *DockerHandler) HandleRestart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	audit("CONTAINER_RESTARTED", r, "container_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -197,6 +202,7 @@ func (h *DockerHandler) HandleKill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	audit("CONTAINER_KILLED", r, "container_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -209,6 +215,7 @@ func (h *DockerHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	audit("CONTAINER_DELETED", r, "container_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -347,6 +354,8 @@ func (h *DockerHandler) HandleLogs(w http.ResponseWriter, r *http.Request) {
 func (h *DockerHandler) HandleTerminal(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
+
+	audit("TERMINAL_SESSION_STARTED", r, "container_id", id)
 
 	// 1. Upgrade to WebSocket first so errors can be delivered over the channel.
 	browserConn, err := utils.UpgradeToWebSocket(w, r)
@@ -545,6 +554,8 @@ func (h *DockerHandler) HandleDeployCompose(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(map[string]string{"error": string(out)})
 		return
 	}
+
+	audit("COMPOSE_DEPLOYED", r)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"output": string(out)})

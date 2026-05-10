@@ -25,6 +25,9 @@ func (d PostgresDriver) Migrate(ctx context.Context, db *sql.DB) error {
 	for _, q := range []string{
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT 'success'`,
 	} {
 		db.ExecContext(ctx, q)
 	}
@@ -160,6 +163,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 	id         TEXT PRIMARY KEY,
 	time       TIMESTAMPTZ NOT NULL,
 	action     TEXT NOT NULL,
+	actor      TEXT NOT NULL DEFAULT '',
+	actor_id   TEXT NOT NULL DEFAULT '',
+	outcome    TEXT NOT NULL DEFAULT 'success',
 	method     TEXT NOT NULL,
 	path       TEXT NOT NULL,
 	trace_id   TEXT NOT NULL DEFAULT '',

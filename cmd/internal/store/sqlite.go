@@ -28,6 +28,9 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 	for _, q := range []string{
 		`ALTER TABLE users ADD COLUMN totp_secret TEXT`,
 		`ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE audit_logs ADD COLUMN actor TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN actor_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success'`,
 	} {
 		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
 	}
@@ -163,6 +166,9 @@ CREATE TABLE IF NOT EXISTS nodes (
 		id        TEXT PRIMARY KEY,
 		time      DATETIME NOT NULL,
 		action    TEXT NOT NULL,
+		actor     TEXT NOT NULL DEFAULT '',
+		actor_id  TEXT NOT NULL DEFAULT '',
+		outcome   TEXT NOT NULL DEFAULT 'success',
 		method    TEXT NOT NULL,
 		path      TEXT NOT NULL,
 		trace_id  TEXT NOT NULL DEFAULT '',

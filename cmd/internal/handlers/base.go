@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"scutum/cmd/internal/auth"
 	"scutum/cmd/internal/utils"
 )
 
@@ -99,32 +99,25 @@ func (h *BaseHandler) LogRequest(r *http.Request, status int, duration time.Dura
 func (h *BaseHandler) Audit(action string, r *http.Request, args ...any) {
 	trace, _ := utils.GetTrace(r.Context())
 
+	actor, actorID := "", ""
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok {
+		actor = claims.Username
+		actorID = claims.UserID
+	}
+
 	attrs := []any{
-		"action", action,
-		"method", r.Method,
-		"path", r.URL.Path,
-		"trace_id", trace.ID,
+		"method",    r.Method,
+		"path",      r.URL.Path,
+		"trace_id",  trace.ID,
 		"client_ip", r.RemoteAddr,
+		"actor",     actor,
+		"actor_id",  actorID,
 	}
 	attrs = append(attrs, args...)
 
-	h.Logger.Audit("audit", attrs...)
-
-	extra := make(map[string]string, len(args)/2)
-	for i := 0; i+1 < len(args); i += 2 {
-		if k, ok := args[i].(string); ok {
-			extra[k] = fmt.Sprint(args[i+1])
-		}
-	}
-	utils.AppendAudit(utils.AuditEntry{
-		Time:     time.Now(),
-		Action:   action,
-		Method:   r.Method,
-		Path:     r.URL.Path,
-		TraceID:  trace.ID,
-		ClientIP: r.RemoteAddr,
-		Extra:    extra,
-	})
+	// Logger.Audit writes to the audit log file and calls AppendAudit once.
+	// Do NOT call AppendAudit separately — that would double-record every event.
+	h.Logger.Audit(action, attrs...)
 }
 
 type HandlerFunc func(w http.ResponseWriter, r *http.Request)

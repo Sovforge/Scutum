@@ -161,7 +161,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := NewBaseHandler(nil)
-	base.Audit("LOGIN_SUCCESS", r, "username", req.Username, "user_id", id)
+	base.Audit("LOGIN_SUCCESS", r, "actor", req.Username, "actor_id", id)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
@@ -209,9 +209,9 @@ func (h *AuthHandler) HandleCreateAPIKey(w http.ResponseWriter, r *http.Request)
 
 	base := NewBaseHandler(nil)
 	base.Audit("API_KEY_CREATED", r,
+		"actor_id", claims.UserID,
 		"key_id", id,
-		"key_name", req.Name,
-		"user_id", claims.UserID)
+		"key_name", req.Name)
 
 	// Return the raw key once — it cannot be retrieved again
 	w.Header().Set("Content-Type", "application/json")
@@ -308,6 +308,9 @@ func (h *AuthHandler) HandleMFAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	base := NewBaseHandler(nil)
+	base.Audit("MFA_ENABLED", r, "actor_id", claims.UserID)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"enabled": true})
 }
@@ -347,6 +350,9 @@ func (h *AuthHandler) HandleMFADisable(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to disable mfa", http.StatusInternalServerError)
 		return
 	}
+
+	base := NewBaseHandler(nil)
+	base.Audit("MFA_DISABLED", r, "actor_id", claims.UserID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"enabled": false})

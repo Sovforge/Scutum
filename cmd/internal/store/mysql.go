@@ -21,8 +21,19 @@ func (d MySQLDriver) Placeholder(n int) string {
 func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 	// MySQL doesn't support multi-statement execution in a single Exec call
 	// unless 'multiStatements=true' is in the DSN.
-	_, err := db.ExecContext(ctx, mysqlSchema)
-	return err
+	if _, err := db.ExecContext(ctx, mysqlSchema); err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64)`,
+		`ALTER TABLE users ADD COLUMN totp_enabled TINYINT(1) NOT NULL DEFAULT 0`,
+		`ALTER TABLE audit_logs ADD COLUMN actor VARCHAR(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN actor_id VARCHAR(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN outcome VARCHAR(20) NOT NULL DEFAULT 'success'`,
+	} {
+		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
+	}
+	return nil
 }
 
 const mysqlSchema = `
@@ -162,6 +173,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     id         VARCHAR(255) PRIMARY KEY,
     time       TIMESTAMP NOT NULL,
     action     VARCHAR(255) NOT NULL,
+    actor      VARCHAR(255) NOT NULL DEFAULT '',
+    actor_id   VARCHAR(255) NOT NULL DEFAULT '',
+    outcome    VARCHAR(20) NOT NULL DEFAULT 'success',
     method     VARCHAR(10) NOT NULL,
     path       TEXT NOT NULL,
     trace_id   VARCHAR(255) NOT NULL DEFAULT '',

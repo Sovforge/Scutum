@@ -42,6 +42,7 @@ func (h *PluginHandler) HandleLoad(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	audit("PLUGIN_LOADED", r, "plugin_name", req.Name, "plugin_path", req.Path)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("plugin loaded"))
 }
@@ -56,6 +57,7 @@ func (h *PluginHandler) HandleUnload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	audit("PLUGIN_UNLOADED", r, "plugin_name", name)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("plugin unloaded"))
 }
@@ -126,6 +128,8 @@ func (h *PluginHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load plugin: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	audit("PLUGIN_UPLOADED", r, "plugin_name", name, "plugin_path", destPath, "filename", header.Filename)
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{

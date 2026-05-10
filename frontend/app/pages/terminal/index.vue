@@ -121,8 +121,8 @@
             <span v-if="line.type === 'cmd'" class="term-prompt">
               <span class="prompt-target">{{ currentSession.name }}</span>
               <span class="prompt-sep">:</span>
-              <span class="prompt-dir">~</span>
-              <span class="prompt-dollar">$</span>
+              <span class="prompt-dir">{{ line.cwd || '~' }}</span>
+              <span class="prompt-dollar">{{ line.promptChar || '$' }}</span>
             </span>
             <span class="term-text" v-html="line.text" />
           </div>
@@ -132,8 +132,8 @@
             <span class="term-prompt">
               <span class="prompt-target">{{ currentSession.name }}</span>
               <span class="prompt-sep">:</span>
-              <span class="prompt-dir">~</span>
-              <span class="prompt-dollar">$</span>
+              <span class="prompt-dir">{{ currentSession.cwd || '~' }}</span>
+              <span class="prompt-dollar">{{ currentSession.promptChar || '$' }}</span>
             </span>
             <span class="term-input-wrap">
               <span class="term-input-text">{{ inputBefore }}</span>
@@ -255,17 +255,25 @@ watch(pickerTab, tab => {
 })
 
 // ── Sessions ───────────────────────────────────────────────────────────────
-interface TermLine { type: 'cmd' | 'out' | 'err' | 'info'; text: string }
+interface TermLine { 
+  type: 'cmd' | 'out' | 'err' | 'info'
+  text: string
+  cwd?: string
+  promptChar?: string
+}
 interface Session  {
   id:        number
   name:      string
   kind:      'container' | 'pod'
   node:      string
   image:     string
+  cwd?:      string
+  promptChar?: string
   namespace?: string
   output:    TermLine[]
   ws:        WebSocket | null
 }
+const lastSentCmd = ref<string | null>(null)
 
 interface Target {
   id:         string
@@ -305,6 +313,8 @@ function openTarget(target: Target) {
     node:      target.node,
     image:     target.image,
     namespace: target.namespace,
+    cwd:       '~',
+    promptChar: '$',
     output:    [],
     ws:        null,
   }
@@ -340,21 +350,62 @@ function connectWS(sess: Session, target: Target) {
   ws.onopen = () => {
     connectedIds.value = [...connectedIds.value, sess.id]
     pushToSession(sess, 'info', 'Connected. Type commands and press Enter.')
+
     nextTick(focusInput)
   }
 
   ws.onmessage = (ev) => {
-    let raw: string
-    if (ev.data instanceof ArrayBuffer) {
-      raw = new TextDecoder().decode(ev.data)
-    } else {
-      raw = ev.data as string
+    const raw = ev.data instanceof ArrayBuffer ? new TextDecoder().decode(ev.data) : (ev.data as string)
+
+    // 1. Filter out null bytes (keep-alives), carriage returns, and control escape codes (DSR reports, etc.)
+    // This must happen before prompt detection so the regex anchors work reliably.
+    let clean = raw.replace(/[\r\0]/g, '')
+                   .replace(/\x1b\[[?0-9;]*[a-zA-Z]/g, (m) => m.endsWith('m') ? m : '')
+
+    // Discard keep-alive / ping frames: if nothing printable remains after stripping
+    // control characters, there is no terminal output to display.
+    if (!clean.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim()) return
+
+    // 2. Heuristic: Identify the shell prompt at the end of the stream
+    const promptRegex = /(^|[\n])(.*?)\s?([#$])\s?$/
+    const promptMatch = clean.trimEnd().match(promptRegex)
+    
+    if (promptMatch) {
+      const rawGroup = (promptMatch[2] || '').replace(/\x1b\[[0-9;]*m/g, '').trim()
+      let rawPath = rawGroup
+      
+      if (rawPath.includes(':')) {
+        rawPath = rawPath.split(':').pop() || ''
+      }
+      rawPath = rawPath.replace(/[\[\]()]/g, '').trim()
+      
+      if (rawPath) sess.cwd = rawPath
+      sess.promptChar = promptMatch[3]
+      
+      // Remove the prompt line entirely from the visible output scrollback
+      const promptIdx = clean.lastIndexOf(promptMatch[0].trim())
+      if (promptIdx !== -1) clean = clean.slice(0, promptIdx)
     }
-    // Strip ANSI escape codes and split on newlines
-    const clean = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\r/g, '')
+
+    // 3. Process the remaining output as text lines or command echoes
     const lines = clean.split('\n')
-    for (const line of lines) {
-      if (line) pushToSession(sess, 'out', escHtml(line))
+    for (let line of lines) {
+      if (!line.trim()) continue
+
+      // Clean the line for comparison (strip ANSI and trim)
+      const nakedLine = line.replace(/\x1b\[[?0-9;]*[a-zA-Z]/g, '').trim()
+      const nakedSent = (lastSentCmd.value || '').trim()
+
+      // If the line is an echo of the command (possibly prefixed by a prompt)
+      if (nakedSent && (nakedLine === nakedSent || nakedLine.endsWith(nakedSent))) {
+        // Only push to session if it's NOT a clear command to keep the screen clean
+        if (nakedSent !== 'clear') {
+          pushToSession(sess, 'cmd', ansiToHtml(line))
+        }
+        lastSentCmd.value = null 
+      } else {
+        pushToSession(sess, 'out', ansiToHtml(line))
+      }
     }
   }
 
@@ -387,10 +438,57 @@ function clearOutput() {
   if (currentSession.value) currentSession.value.output = []
 }
 
+const ansiColors: Record<string, string> = {
+  '30': '#21222c', '31': '#ff5555', '32': '#50fa7b', '33': '#f1fa8c',
+  '34': '#bd93f9', '35': '#ff79c6', '36': '#8be9fd', '37': '#f8f8f2',
+  '90': '#6272a4', '91': '#ffb86c', '92': '#50fa7b', '93': '#f1fa8c',
+  '94': '#bd93f9', '95': '#ff79c6', '96': '#8be9fd', '97': '#ffffff'
+}
+
+function ansiToHtml(str: string) {
+  let res = str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  let spanOpen = false
+
+  // SGR (Select Graphic Rendition) for colors and styles
+  res = res.replace(/\x1b\[([0-9;]*)m/g, (_, codes) => {
+    let out = spanOpen ? '</span>' : ''
+    spanOpen = false
+
+    // 0, empty, or just 'm' resets all attributes
+    if (codes === '0' || codes === '' || codes === 'm') return out
+
+    const parts = codes.split(';')
+    let styles = []
+    for (const c of parts) {
+      if (ansiColors[c]) styles.push(`color: ${ansiColors[c]}`)
+      if (c === '1') styles.push('font-weight: bold')
+      if (c === '3') styles.push('font-style: italic')
+      if (c === '4') styles.push('text-decoration: underline')
+    }
+    
+    if (styles.length) {
+      spanOpen = true
+      return out + `<span style="${styles.join('; ')}">`
+    }
+    return out
+  })
+
+  // Strip other unsupported escape sequences (cursor movement, etc.)
+  res = res.replace(/\x1b\[[?0-9;]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+  if (spanOpen) res += '</span>'
+  return res
+}
+
 function pushToSession(sess: Session, type: TermLine['type'], text: string) {
   // Always mutate through the reactive proxy so Vue tracks the change
   const target = sessions.value.find(s => s.id === sess.id)
-  if (target) target.output.push({ type, text })
+  if (target) {
+    target.output.push({ 
+      type, text,
+      cwd: type === 'cmd' ? sess.cwd : undefined,
+      promptChar: type === 'cmd' ? sess.promptChar : undefined
+    })
+  }
   nextTick(() => { if (outputEl.value) outputEl.value.scrollTop = outputEl.value.scrollHeight })
 }
 
@@ -416,8 +514,23 @@ function onKey(e: KeyboardEvent) {
 
   if (e.key === 'Enter') {
     const cmd = inputLine.value
+
+    // Handle 'clear' command locally to wipe scrollback history
+    if (cmd.trim() === 'clear') {
+      clearOutput()
+      lastSentCmd.value = 'clear'
+      ws?.send('clear\n')
+      inputLine.value = ''
+      cursorPos.value = 0
+      e.preventDefault()
+      return
+    }
+    
+    // Track what we sent so we can identify the echo coming back
+    lastSentCmd.value = cmd
+    
     if (cmd.trim()) { history.value.unshift(cmd); historyIdx.value = -1 }
-    pushToSession(currentSession.value, 'cmd', escHtml(cmd))
+    
     ws?.send(cmd + '\n')
     inputLine.value = ''
     cursorPos.value = 0
@@ -434,7 +547,6 @@ function onKey(e: KeyboardEvent) {
     clearOutput(); e.preventDefault()
   } else if (e.key === 'c' && e.ctrlKey) {
     ws?.send('\x03')
-    pushToSession(currentSession.value, 'cmd', escHtml(inputLine.value) + '^C')
     inputLine.value = ''
     e.preventDefault()
   }

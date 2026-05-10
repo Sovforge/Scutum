@@ -14,10 +14,10 @@
 
 ### Use Scutum if you:
 
-- **Run the stack sprawl:** You're tired of juggling Tailscale + Docker + random dashboards.
-- **Are trapped behind NAT:** You need to connect nodes without exposing ports to the public internet.
-- **Refuse the "Cloud Tax":** You want to deploy workloads without relying on a third-party control plane.
-- **Build at the Edge:** You're creating air-gapped or high-latency systems that need local autonomy.
+- **Manage fragmented tooling:** You want a single interface for networking, containers, and logs instead of juggling separate dashboards.
+- **Operate behind NAT:** You need to connect nodes without exposing ports to the public internet.
+- **Require full data sovereignty:** You want to deploy workloads without routing traffic or control data through a third-party SaaS plane.
+- **Build at the edge:** You're running air-gapped or high-latency systems that need local autonomy and offline capability.
 
 <details>
 <summary><b>📖 Table of Contents</b> (click to expand)</summary>
@@ -180,26 +180,26 @@ Scutum turns any set of nodes into an encrypted mesh. Unlike traditional VPNs, t
 
 ```mermaid
 graph TD
-    subgraph Internet
-        HUB["🖥️ Hub Node<br/>(Public IP · Signaling)"]
+    subgraph internet["Internet"]
+        HUB["Hub Node\n(Public IP - Signaling)"]
     end
 
-    subgraph Site A ["Site A (NAT/CGNAT)"]
-        RA["🔒 Remote A"]
+    subgraph siteA["Site A (NAT/CGNAT)"]
+        RA["Remote A"]
     end
 
-    subgraph Site B ["Site B (NAT/CGNAT)"]
-        RB["🔒 Remote B"]
+    subgraph siteB["Site B (NAT/CGNAT)"]
+        RB["Remote B"]
     end
 
-    UI["🖱️ Control UI"]
+    UI["Control UI"]
 
     UI -- "1. Enroll & approve" --> HUB
     RA -- "2. Outbound handshake" --> HUB
     RB -- "2. Outbound handshake" --> HUB
     HUB -. "3. Exchange WireGuard keys" .-> RA
     HUB -. "3. Exchange WireGuard keys" .-> RB
-    RA == "4. Direct P2P · WireGuard · E2E Encrypted" == RB
+    RA == "4. Direct P2P - WireGuard - E2E Encrypted" ==> RB
 ```
 
 > The Hub brokers the initial handshake only. Once peers have exchanged keys, all data flows directly between them — the Hub is not in the data path.
@@ -293,10 +293,17 @@ Environment variables:
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `PORT` | `8080` | HTTP listen port |
-| `DATA_DIR` | `../data` | Directory for the SQLite database |
-| `SECRETS_DIR` | `../secrets` | Directory for keys and KMS config |
+| `DATA_DIR` | `./data` | Directory for the SQLite database and persistent state |
+| `SECRETS_DIR` | `./secrets` | Directory for TLS keys and KMS configuration |
 | `DATABASE_URL` | *(unset — uses SQLite)* | Postgres (`postgres://...`) or MySQL (`mysql://...`) DSN |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, or `error` |
+| `CERT_FILE` | `$SECRETS_DIR/server.crt` | Path to the TLS certificate |
+| `KEY_FILE` | `$SECRETS_DIR/server.key` | Path to the TLS private key |
+| `CA_CERT_FILE` | *(unset)* | Path to a CA certificate to enable mTLS client verification |
+| `AUDIT_ENABLED` | `false` | Set to `true` to enable the security audit log |
+| `AUDIT_RETENTION_DAYS` | `365` | Days to retain audit log entries (CRA recommends ≥ 1 year) |
+| `HEALER_INTERVAL` | `30s` | How often the mesh healer reconciles peer state (Go duration string) |
+| `PLUGINS_DIR` | `/app/plugins` | Directory where uploaded WASM plugins are stored |
 
 ---
 
@@ -322,14 +329,32 @@ Scutum includes a secure, capability-scoped **WebAssembly (WASM)** plugin sandbo
 
 ## 📡 API Quick Reference
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | System heartbeat + uptime |
-| `POST /terminal/exec` | Start a P2P terminal session |
-| `POST /network/peer` | Add a node to the mesh |
-| `GET /network/status` | View WireGuard topology |
-| `POST /deploy` | Deploy containers or stacks |
-| `GET /logs/stream` | Live log streaming (OTEL) |
+All endpoints are served under `/api/`. Requests to authenticated routes require a `Bearer` token or API key in the `Authorization` header.
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/health` | — | System heartbeat and uptime |
+| `POST` | `/auth/login` | — | Obtain a JWT session token |
+| `GET` | `/auth/me` | ✓ | Current user profile |
+| `GET` | `/nodes` | ✓ | List registered mesh nodes |
+| `POST` | `/nodes` | ✓ admin | Enroll a new node |
+| `POST` | `/network/peer` | ✓ | Add a WireGuard peer to the mesh |
+| `GET` | `/network/status` | ✓ | WireGuard interface and peer status |
+| `GET` | `/network/mesh-summary` | ✓ | Topology summary for the UI graph |
+| `GET` | `/docker/containers` | ✓ | List containers on the target node |
+| `POST` | `/docker/deploy` | ✓ | Deploy a container image |
+| `POST` | `/docker/deploy-compose` | ✓ | Deploy a Compose stack |
+| `GET` | `/docker/containers/{id}/terminal` | ✓ | Open a WebSocket terminal into a container |
+| `GET` | `/kubernetes/summary` | ✓ | Cluster resource summary |
+| `GET` | `/kubernetes/pods` | ✓ | List pods across all namespaces |
+| `GET` | `/k8s/{namespace}/{pod}/terminal` | ✓ | Open a WebSocket terminal into a pod |
+| `GET` | `/observability/logs` | ✓ admin | Structured application logs |
+| `GET` | `/audit/logs` | ✓ admin | CRA-compliant security audit trail |
+| `GET` | `/audit/logs/export` | ✓ admin | Export audit logs as CSV/JSON |
+| `POST` | `/plugins/upload` | ✓ admin | Upload and load a WASM plugin |
+| `GET` | `/plugins` | ✓ | List loaded plugins |
+
+> Routes that accept an `X-Target-Node` header will proxy the request to the specified mesh node.
 
 ---
 

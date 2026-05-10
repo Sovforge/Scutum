@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"embed"
-	"encoding/json"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,8 +23,6 @@ import (
 	stdsync "sync"
 	"syscall"
 	"time"
-	"crypto/tls"
-	"crypto/x509"
 
 	"golang.org/x/time/rate"
 
@@ -281,7 +283,7 @@ func main() {
 				retentionDays = d
 			}
 		}
-		
+
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -316,7 +318,9 @@ func main() {
 	// --- Auth middleware ---
 	authMW := auth.Middleware(db, jwtSecret)
 	require := func(resource, action string, h http.HandlerFunc) http.Handler {
-		return auth.Require(db, resource, action)(http.HandlerFunc(h))
+		// Ensure that the authentication middleware runs before the permission check.
+		// This populates the user context needed by auth.Require.
+		return authMW(auth.Require(db, resource, action)(http.HandlerFunc(h)))
 	}
 
 	// --- Handlers ---
@@ -472,7 +476,8 @@ func main() {
 	mainMux := http.NewServeMux()
 	// Auth is scoped to /api/ only; frontend assets are served without authentication
 	// so the browser can load the login page before any credentials exist.
-	mainMux.Handle("/api/", http.StripPrefix("/api", metricsMiddleware(authMW(apiMux))))
+	// We remove authMW from the global wrapper so that apiMux can manage its own public/private routes.
+	mainMux.Handle("/api/", http.StripPrefix("/api", metricsMiddleware(apiMux)))
 
 	// Nuxt generates hashed filenames under /_nuxt/ so they can be cached forever.
 	sub, _ := fs.Sub(frontendFS, "dist")
@@ -513,7 +518,6 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(index)
 	})
-
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -687,7 +691,6 @@ func loadOrGenerateHMACKey(ctx context.Context, db *store.Store, secretsDir stri
 	return key, nil
 }
 
-
 func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, healer *sync.Healer, clientTLSConfig *tls.Config) error {
 	peers, err := db.ListWGPeers(ctx)
 	if err != nil {
@@ -742,6 +745,22 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack implements the http.Hijacker interface to allow WebSocket/Terminal connections.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("underlying ResponseWriter does not support hijacking")
+	}
+	return h.Hijack()
+}
+
+// Flush implements the http.Flusher interface for streaming responses.
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func metricsMiddleware(next http.Handler) http.Handler {

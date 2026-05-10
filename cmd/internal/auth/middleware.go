@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"scutum/cmd/internal/utils"
 )
 
 type Store interface {
@@ -47,6 +49,14 @@ func Middleware(store Store, jwtSecret []byte) func(http.Handler) http.Handler {
 			}
 			claims, err := resolve(r, store, jwtSecret)
 			if err != nil {
+				utils.AppendAudit(utils.AuditEntry{
+					Time:     time.Now().UTC(),
+					Action:   "AUTH_FAILURE",
+					Outcome:  utils.OutcomeFailure,
+					Method:   r.Method,
+					Path:     r.URL.Path,
+					ClientIP: r.RemoteAddr,
+				})
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -71,6 +81,17 @@ func Require(store Store, resource, action string) func(http.Handler) http.Handl
 			}
 			allowed, err := store.UserHasPermission(claims.UserID, resource, action)
 			if err != nil || !allowed {
+				utils.AppendAudit(utils.AuditEntry{
+					Time:     time.Now().UTC(),
+					Action:   "AUTHZ_FAILURE",
+					Actor:    claims.Username,
+					ActorID:  claims.UserID,
+					Outcome:  utils.OutcomeFailure,
+					Method:   r.Method,
+					Path:     r.URL.Path,
+					ClientIP: r.RemoteAddr,
+					Extra:    map[string]string{"resource": resource, "required_action": action},
+				})
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}

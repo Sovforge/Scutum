@@ -191,14 +191,14 @@ docker run -d \\
   -v /app/data:/app/data \\
   -v /app/secrets:/app/secrets \\
   -p 8080:8080 \\
-  ghcr.io/andreas14101/scutum:latest`
+  ghcr.io/Sovforge/scutum:latest`
 
 
 const sbomCmd = `# Inspect the SBOM with Syft
-syft ghcr.io/andreas14101/scutum:latest
+syft ghcr.io/Sovforge/scutum:latest
 
 # Export to CycloneDX JSON
-syft ghcr.io/andreas14101/scutum:latest \\
+syft ghcr.io/Sovforge/scutum:latest \\
   -o cyclonedx-json > scutum-sbom.json`
 
 async function copy(text: string) {

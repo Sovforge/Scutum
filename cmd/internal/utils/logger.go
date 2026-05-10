@@ -18,6 +18,12 @@ type ObsSink interface {
 	PersistTrace(e TraceEntry)
 }
 
+// EventOutcome values for AuditEntry.Outcome.
+const (
+	OutcomeSuccess = "success"
+	OutcomeFailure = "failure"
+)
+
 var globalSink ObsSink
 
 // SetObsSink registers a persistent sink that receives all entries.
@@ -39,6 +45,9 @@ type LogEntry struct {
 type AuditEntry struct {
 	Time     time.Time         `json:"time"`
 	Action   string            `json:"action"`
+	Actor    string            `json:"actor,omitempty"`
+	ActorID  string            `json:"actor_id,omitempty"`
+	Outcome  string            `json:"outcome,omitempty"`
 	Method   string            `json:"method"`
 	Path     string            `json:"path"`
 	TraceID  string            `json:"trace_id,omitempty"`
@@ -128,6 +137,7 @@ func GetTraceEntries() []TraceEntry {
 type Logger struct {
 	logger  *slog.Logger
 	auditer *slog.Logger
+	level   *slog.LevelVar
 	mu      sync.RWMutex
 }
 
@@ -144,12 +154,14 @@ func InitLogger(level slog.Level, auditEnabled bool) *Logger {
 }
 
 func newLogger(level slog.Level, auditEnabled bool) *Logger {
+	lv := &slog.LevelVar{}
+	lv.Set(level)
 	opts := &slog.HandlerOptions{
-		Level: level,
+		Level:     lv,
 		AddSource: true,
 	}
 
-	console := slog.NewTextHandler(os.Stderr, opts)
+	console := slog.NewJSONHandler(os.Stderr, opts)
 
 	var auditHandler slog.Handler
 	if auditEnabled {
@@ -157,7 +169,7 @@ func newLogger(level slog.Level, auditEnabled bool) *Logger {
 		if err != nil {
 			auditHandler = console
 		} else {
-			auditHandler = slog.NewTextHandler(auditFile, opts)
+			auditHandler = slog.NewJSONHandler(auditFile, opts)
 		}
 	} else {
 		auditHandler = console
@@ -166,6 +178,7 @@ func newLogger(level slog.Level, auditEnabled bool) *Logger {
 	return &Logger{
 		logger:  slog.New(console),
 		auditer: slog.New(auditHandler),
+		level:   lv,
 	}
 }
 
@@ -197,31 +210,26 @@ func (l *Logger) Fatal(msg string, args ...any) {
 func (l *Logger) Audit(action string, args ...any) {
 	l.auditer.Info(action, args...)
 	entry := AuditEntry{
-		Time:   time.Now(),
-		Action: action,
-		Extra:  make(map[string]string),
+		Time:    time.Now().UTC(),
+		Action:  action,
+		Outcome: OutcomeSuccess,
+		Extra:   make(map[string]string),
 	}
-	// Extract basic fields from args if present (best effort)
-	for i := 0; i < len(args); i += 2 {
-		if i+1 >= len(args) {
-			break
-		}
+	for i := 0; i+1 < len(args); i += 2 {
 		key, ok := args[i].(string)
 		if !ok {
 			continue
 		}
 		val := fmt.Sprintf("%v", args[i+1])
 		switch key {
-		case "method":
-			entry.Method = val
-		case "path":
-			entry.Path = val
-		case "trace_id":
-			entry.TraceID = val
-		case "client_ip":
-			entry.ClientIP = val
-		default:
-			entry.Extra[key] = val
+		case "method":    entry.Method = val
+		case "path":      entry.Path = val
+		case "trace_id":  entry.TraceID = val
+		case "client_ip": entry.ClientIP = val
+		case "actor":     entry.Actor = val
+		case "actor_id":  entry.ActorID = val
+		case "outcome":   entry.Outcome = val
+		default:          entry.Extra[key] = val
 		}
 	}
 	AppendAudit(entry)
@@ -232,6 +240,7 @@ func (l *Logger) With(args ...any) *Logger {
 	return &Logger{
 		logger:  l.logger.With(args...),
 		auditer: l.auditer.With(args...),
+		level:   l.level,
 	}
 }
 
@@ -281,6 +290,9 @@ func (t *Trace) End(err error) {
 func (l *Logger) SetLevel(level slog.Level) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.level != nil {
+		l.level.Set(level)
+	}
 }
 
 type LogWriter struct {

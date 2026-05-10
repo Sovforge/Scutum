@@ -111,6 +111,8 @@ func (h *UserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		_ = h.store.SetUserRoles(r.Context(), id, roleIDs)
 	}
 
+	audit("USER_CREATED", r, "target_user_id", id, "target_username", req.Username)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"id": id, "username": req.Username})
@@ -156,6 +158,8 @@ func (h *UserHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		_ = h.store.SetUserRoles(r.Context(), id, roleIDs)
 	}
 
+	audit("USER_UPDATED", r, "target_user_id", id)
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -165,6 +169,7 @@ func (h *UserHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
+	audit("USER_DELETED", r, "target_user_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -218,6 +223,7 @@ func (h *UserHandler) HandleDeleteToken(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "key not found", http.StatusNotFound)
 		return
 	}
+	audit("API_KEY_REVOKED", r, "key_id", keyID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

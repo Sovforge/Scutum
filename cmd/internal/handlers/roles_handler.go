@@ -65,6 +65,8 @@ func (h *RoleHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		_ = h.store.SetRolePerms(r.Context(), id, expandWildcards(req.Perms))
 	}
 
+	audit("ROLE_CREATED", r, "role_id", id, "role_name", req.Name)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"id": id, "name": req.Name})
@@ -89,6 +91,8 @@ func (h *RoleHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		_ = h.store.SetRolePerms(r.Context(), id, expandWildcards(req.Perms))
 	}
 
+	audit("ROLE_UPDATED", r, "role_id", id)
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -98,6 +102,7 @@ func (h *RoleHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "role not found", http.StatusNotFound)
 		return
 	}
+	audit("ROLE_DELETED", r, "role_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -63,6 +63,8 @@ func (h *WireGuardHandler) HandleAddPeer(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
+	audit("PEER_ADDED", r, "public_key", req.PublicKey, "endpoint", req.Endpoint, "allowed_ips", req.AllowedIPs)
+
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("peer added"))
 }

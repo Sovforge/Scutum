@@ -40,12 +40,18 @@ func (s *Store) PersistTrace(e utils.TraceEntry) {
 
 func (s *Store) insertAuditLog(ctx context.Context, e utils.AuditEntry) error {
 	extra, _ := json.Marshal(e.Extra)
+	outcome := e.Outcome
+	if outcome == "" {
+		outcome = utils.OutcomeSuccess
+	}
 	_, err := s.db.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO audit_logs (id, time, action, method, path, trace_id, client_ip, extra)
-		             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8)),
-		uuid.New().String(), e.Time, e.Action, e.Method, e.Path,
-		e.TraceID, e.ClientIP, string(extra),
+		fmt.Sprintf(`INSERT INTO audit_logs
+			(id, time, action, actor, actor_id, outcome, method, path, trace_id, client_ip, extra)
+			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6),
+			s.ph(7), s.ph(8), s.ph(9), s.ph(10), s.ph(11)),
+		uuid.New().String(), e.Time, e.Action, e.Actor, e.ActorID, outcome,
+		e.Method, e.Path, e.TraceID, e.ClientIP, string(extra),
 	)
 	return err
 }
@@ -80,7 +86,7 @@ func (s *Store) ListAuditLogs(ctx context.Context, limit int) ([]utils.AuditEntr
 		limit = 1000
 	}
 	rows, err := s.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT time, action, method, path, trace_id, client_ip, extra
+		fmt.Sprintf(`SELECT time, action, actor, actor_id, outcome, method, path, trace_id, client_ip, extra
 		             FROM audit_logs ORDER BY time DESC LIMIT %s`, s.ph(1)),
 		limit,
 	)
@@ -93,8 +99,8 @@ func (s *Store) ListAuditLogs(ctx context.Context, limit int) ([]utils.AuditEntr
 	for rows.Next() {
 		var e utils.AuditEntry
 		var extraJSON string
-		if err := rows.Scan(&e.Time, &e.Action, &e.Method, &e.Path,
-			&e.TraceID, &e.ClientIP, &extraJSON); err != nil {
+		if err := rows.Scan(&e.Time, &e.Action, &e.Actor, &e.ActorID, &e.Outcome,
+			&e.Method, &e.Path, &e.TraceID, &e.ClientIP, &extraJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(extraJSON), &e.Extra)
