@@ -55,6 +55,10 @@ func (h *DockerHandler) PostDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid host port", http.StatusBadRequest)
 		return
 	}
+	if req.HostPort > 0 && req.Port == 0 {
+		http.Error(w, "host port specified without container port", http.StatusBadRequest)
+		return
+	}
 
 	dockerConfig := models.ContainerCreateConfig{
 		Image: req.Repo,
