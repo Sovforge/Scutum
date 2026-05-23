@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -15,17 +14,22 @@ type obsStore interface {
 	ListAuditLogs(ctx context.Context, limit int) ([]utils.AuditEntry, error)
 	ListSystemLogs(ctx context.Context, limit int) ([]utils.LogEntry, error)
 	ListTraces(ctx context.Context, limit int) ([]utils.TraceEntry, error)
+	ListMetrics(ctx context.Context, limit int, name, service string) ([]utils.MetricPoint, error)
 }
 
 type ObservabilityHandler struct {
-	store obsStore
+	store     obsStore
+	nodeStore nodeProxyStore
 }
 
-func NewObservabilityHandler(store obsStore) *ObservabilityHandler {
-	return &ObservabilityHandler{store: store}
+func NewObservabilityHandler(store obsStore, nodeStore nodeProxyStore) *ObservabilityHandler {
+	return &ObservabilityHandler{store: store, nodeStore: nodeStore}
 }
 
 func (h *ObservabilityHandler) HandleLogs(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
 	limit := queryInt(r, "limit", 500)
 	entries, err := h.store.ListSystemLogs(r.Context(), limit)
 	if err != nil {
@@ -40,6 +44,9 @@ func (h *ObservabilityHandler) HandleLogs(w http.ResponseWriter, r *http.Request
 }
 
 func (h *ObservabilityHandler) HandleAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
 	limit := queryInt(r, "limit", 1000)
 	entries, err := h.store.ListAuditLogs(r.Context(), limit)
 	if err != nil {
@@ -53,6 +60,9 @@ func (h *ObservabilityHandler) HandleAuditLogs(w http.ResponseWriter, r *http.Re
 }
 
 func (h *ObservabilityHandler) HandleTraces(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
 	limit := queryInt(r, "limit", 500)
 	entries, err := h.store.ListTraces(r.Context(), limit)
 	if err != nil {
@@ -68,6 +78,9 @@ func (h *ObservabilityHandler) HandleTraces(w http.ResponseWriter, r *http.Reque
 // HandleExportAuditLogs streams audit logs as a CSV download.
 // GET /audit/logs/export?limit=5000&format=csv  (default) or format=json
 func (h *ObservabilityHandler) HandleExportAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
 	limit := queryInt(r, "limit", 5000)
 	format := r.URL.Query().Get("format")
 	if format == "" {
@@ -121,5 +134,3 @@ func queryInt(r *http.Request, key string, def int) int {
 	return n
 }
 
-// Ensure ObservabilityHandler.queryInt collision is not an issue — keep as package func.
-var _ = fmt.Sprintf // avoid unused import if fmt is removed

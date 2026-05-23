@@ -33,11 +33,13 @@ type setupStore interface {
 	GetSecret(ctx context.Context, key string) ([]byte, error)
 	SetWireGuardPrivateKey(ctx context.Context, ifaceName string, privateKey []byte) error
 	CreateNode(ctx context.Context, n store.NodeRecord) error
+	UpsertWGPeer(ctx context.Context, p store.WGPeerRecord) error
 }
 
 type SetupHandler struct {
 	store      setupStore
 	configPath string
+	APIPort    string // set by main so the local node record has the right host:port
 	onComplete func(provider kms.Provider)
 }
 
@@ -93,6 +95,7 @@ type wireguardConfig struct {
 	HubEndpoint   string `json:"hub_endpoint,omitempty"`
 	HubPublicKey  string `json:"hub_public_key,omitempty"`
 	HubAllowedIPs string `json:"hub_allowed_ips,omitempty"`
+	HubHMACKey    string `json:"hub_hmac_key,omitempty"`
 }
 
 type setupRequest struct {
@@ -157,27 +160,29 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Admin.Username == "" || req.Admin.Password == "" {
-		http.Error(w, "admin username and password are required", http.StatusBadRequest)
-		return
-	}
-
-	var hasUpper, hasLower, hasNumber, hasSpecial bool
-	for _, c := range req.Admin.Password {
-		switch {
-		case unicode.IsUpper(c):
-			hasUpper = true
-		case unicode.IsLower(c):
-			hasLower = true
-		case unicode.IsNumber(c) || unicode.IsDigit(c):
-			hasNumber = true
-		case unicode.IsPunct(c) || unicode.IsSymbol(c):
-			hasSpecial = true
+	if req.InstallType != string(store.InstallRemote) {
+		if req.Admin.Username == "" || req.Admin.Password == "" {
+			http.Error(w, "admin username and password are required", http.StatusBadRequest)
+			return
 		}
-	}
-	if len(req.Admin.Password) < 12 || !hasUpper || !hasLower || !hasNumber || !hasSpecial {
-		http.Error(w, "admin password must be at least 12 characters and contain uppercase, lowercase, numbers, and special characters", http.StatusBadRequest)
-		return
+
+		var hasUpper, hasLower, hasNumber, hasSpecial bool
+		for _, c := range req.Admin.Password {
+			switch {
+			case unicode.IsUpper(c):
+				hasUpper = true
+			case unicode.IsLower(c):
+				hasLower = true
+			case unicode.IsNumber(c) || unicode.IsDigit(c):
+				hasNumber = true
+			case unicode.IsPunct(c) || unicode.IsSymbol(c):
+				hasSpecial = true
+			}
+		}
+		if len(req.Admin.Password) < 12 || !hasUpper || !hasLower || !hasNumber || !hasSpecial {
+			http.Error(w, "admin password must be at least 12 characters and contain uppercase, lowercase, numbers, and special characters", http.StatusBadRequest)
+			return
+		}
 	}
 
 	if err := validateWireGuardConfig(req); err != nil {
@@ -273,20 +278,23 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := auth.HashPassword(req.Admin.Password)
-	if err != nil {
-		handlerInternalErr(w, r, "hash password", err)
-		return
-	}
+	adminID := ""
+	if req.InstallType != string(store.InstallRemote) {
+		hash, err := auth.HashPassword(req.Admin.Password)
+		if err != nil {
+			handlerInternalErr(w, r, "hash password", err)
+			return
+		}
 
-	adminID := uuid.New().String()
-	if err := h.store.CreateUser(r.Context(), adminID, req.Admin.Username, hash); err != nil {
-		handlerInternalErr(w, r, "create admin user", err)
-		return
-	}
-	if err := h.store.AssignRole(r.Context(), adminID, "role_admin"); err != nil {
-		handlerInternalErr(w, r, "assign admin role", err)
-		return
+		adminID = uuid.New().String()
+		if err := h.store.CreateUser(r.Context(), adminID, req.Admin.Username, hash); err != nil {
+			handlerInternalErr(w, r, "create admin user", err)
+			return
+		}
+		if err := h.store.AssignRole(r.Context(), adminID, "role_admin"); err != nil {
+			handlerInternalErr(w, r, "assign admin role", err)
+			return
+		}
 	}
 	if err := h.store.SetKMSProvider(r.Context(), cfg.Provider); err != nil {
 		handlerInternalErr(w, r, "record kms provider", err)
@@ -301,17 +309,34 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.WireGuard.HubHMACKey != "" {
+		if keyBytes, err := hex.DecodeString(req.WireGuard.HubHMACKey); err == nil {
+			_ = h.store.SetSecret(r.Context(), "hub_hmac_key", keyBytes)
+		}
+	}
+
 	// Register the local node so it appears in the mesh/nodes view.
 	if wgResult != nil {
 		hostname, _ := os.Hostname()
 		if hostname == "" {
 			hostname = "local"
 		}
+		// Build a proper host:port API address from the WireGuard mesh IP.
+		// wgResult.Address is a CIDR (e.g. "10.x.x.x/24"); strip the prefix.
+		apiAddr := wgResult.Address
+		if idx := strings.Index(apiAddr, "/"); idx != -1 {
+			apiAddr = apiAddr[:idx]
+		}
+		port := h.APIPort
+		if port == "" {
+			port = "8080"
+		}
+		apiAddr = apiAddr + ":" + strings.TrimPrefix(port, ":")
 		_ = h.store.CreateNode(r.Context(), store.NodeRecord{
 			ID:        uuid.New().String(),
 			Name:      hostname,
 			Type:      req.InstallType,
-			Address:   wgResult.Address,
+			Address:   apiAddr,
 			PublicKey: wgResult.PublicKey,
 		})
 	}
@@ -432,11 +457,26 @@ func (h *SetupHandler) setupWireGuard(ctx context.Context, req setupRequest) (*w
 		if err := utils.AddPeer("wg0", wg.HubPublicKey, wg.HubEndpoint, wg.HubAllowedIPs, 25); err != nil {
 			return nil, fmt.Errorf("add hub as peer: %w", err)
 		}
+		// Persist the hub peer so it can be restored after a container restart.
+		_ = h.store.CreateNode(ctx, store.NodeRecord{
+			ID: "hub", Name: "hub", Type: "hub",
+			Address: wg.HubEndpoint, PublicKey: wg.HubPublicKey,
+		})
+		_ = h.store.UpsertWGPeer(ctx, store.WGPeerRecord{
+			NodeID: "hub", Endpoint: wg.HubEndpoint, AllowedIPs: wg.HubAllowedIPs,
+		})
 	case store.InstallCombined:
 		if wg.HubEndpoint != "" && wg.HubPublicKey != "" {
 			if err := utils.AddPeer("wg0", wg.HubPublicKey, wg.HubEndpoint, wg.HubAllowedIPs, 25); err != nil {
 				return nil, fmt.Errorf("add hub as peer: %w", err)
 			}
+			_ = h.store.CreateNode(ctx, store.NodeRecord{
+				ID: "hub", Name: "hub", Type: "hub",
+				Address: wg.HubEndpoint, PublicKey: wg.HubPublicKey,
+			})
+			_ = h.store.UpsertWGPeer(ctx, store.WGPeerRecord{
+				NodeID: "hub", Endpoint: wg.HubEndpoint, AllowedIPs: wg.HubAllowedIPs,
+			})
 		}
 	}
 

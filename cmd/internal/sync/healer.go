@@ -37,6 +37,13 @@ type WGPeer struct {
 	PublicKey  string
 	Endpoint   string
 	AllowedIPs string
+	// FreshEndpoint, if non-nil, is called when the peer's handshake is stale to
+	// fetch the latest endpoint from persistent storage. If it returns an endpoint
+	// that differs from the one last used for a re-add, the healer re-adds the peer
+	// with the new endpoint. This lets registered endpoint updates (from
+	// HandleRegisterEndpoint) propagate into WireGuard without overwriting runtime-
+	// learned endpoints when nothing has changed.
+	FreshEndpoint func(ctx context.Context) (string, error)
 }
 
 // WGChecker checks if a WireGuard peer is reachable and re-adds it if not.
@@ -98,15 +105,16 @@ func (c *HealerConfig) setDefaults() {
 // services, healing faults as they are detected.
 // It is safe for concurrent use.
 type Healer struct {
-	cfg           HealerConfig
-	wgCheck       WGChecker
-	mu            sync.Mutex
-	peers         []WGPeer
-	services      []ServiceEntry
-	backoffs      map[string]time.Duration
-	lastAttemptAt map[string]time.Time
-	cancel        context.CancelFunc
-	stopped       sync.WaitGroup
+	cfg              HealerConfig
+	wgCheck          WGChecker
+	mu               sync.Mutex
+	peers            []WGPeer
+	services         []ServiceEntry
+	backoffs         map[string]time.Duration
+	lastAttemptAt    map[string]time.Time
+	lastUsedEndpoint map[string]string // key: "ifaceName:pubkey"
+	cancel           context.CancelFunc
+	stopped          sync.WaitGroup
 }
 
 // NewHealer creates a Healer. wgCheck may be nil if you don't need WireGuard
@@ -114,10 +122,11 @@ type Healer struct {
 func NewHealer(cfg HealerConfig, wgCheck WGChecker) *Healer {
 	cfg.setDefaults()
 	return &Healer{
-		cfg:           cfg,
-		wgCheck:       wgCheck,
-		backoffs:      make(map[string]time.Duration),
-		lastAttemptAt: make(map[string]time.Time),
+		cfg:              cfg,
+		wgCheck:          wgCheck,
+		backoffs:         make(map[string]time.Duration),
+		lastAttemptAt:    make(map[string]time.Time),
+		lastUsedEndpoint: make(map[string]string),
 	}
 }
 
@@ -226,19 +235,64 @@ func (h *Healer) healPeer(ctx context.Context, peer WGPeer) {
 	}
 
 	if age > h.cfg.HandshakeMaxAge {
-		h.cfg.Logger.Warn("wg peer handshake stale, re-adding",
-			"iface", peer.IfaceName,
-			"peer", safeTruncate(peer.PublicKey, 8),
-			"age", age.Round(time.Second),
-		)
 		metrics.HealerCheckTotal.WithLabelValues("peer_stale").Inc()
-		if err := h.wgCheck.ReAddPeer(ctx, peer); err != nil {
-			h.cfg.Logger.Error("wg re-add failed",
+
+		if peer.FreshEndpoint == nil {
+			// No endpoint source — let WireGuard's keepalive/rekey recover the tunnel.
+			h.cfg.Logger.Warn("wg peer handshake stale",
+				"iface", peer.IfaceName,
+				"peer", safeTruncate(peer.PublicKey, 8),
+				"age", age.Round(time.Second),
+			)
+			return
+		}
+
+		freshEP, err := peer.FreshEndpoint(checkCtx)
+		if err != nil {
+			h.cfg.Logger.Warn("wg peer handshake stale, could not fetch fresh endpoint",
+				"iface", peer.IfaceName,
+				"peer", safeTruncate(peer.PublicKey, 8),
+				"age", age.Round(time.Second),
+				"err", err,
+			)
+			return
+		}
+
+		peerKey := peer.IfaceName + ":" + peer.PublicKey
+		h.mu.Lock()
+		lastEP := h.lastUsedEndpoint[peerKey]
+		h.mu.Unlock()
+
+		if freshEP == lastEP {
+			// Endpoint unchanged since last re-add; WireGuard's keepalive will learn
+			// the real endpoint from incoming packets — don't overwrite it.
+			h.cfg.Logger.Warn("wg peer handshake stale",
+				"iface", peer.IfaceName,
+				"peer", safeTruncate(peer.PublicKey, 8),
+				"age", age.Round(time.Second),
+			)
+			return
+		}
+
+		// Endpoint was updated by the register-endpoint mechanism — re-add safely.
+		updated := peer
+		updated.Endpoint = freshEP
+		if err := h.wgCheck.ReAddPeer(ctx, updated); err != nil {
+			h.cfg.Logger.Error("wg re-add with fresh endpoint failed",
 				"iface", peer.IfaceName,
 				"peer", safeTruncate(peer.PublicKey, 8),
 				"err", err,
 			)
+			return
 		}
+		h.mu.Lock()
+		h.lastUsedEndpoint[peerKey] = freshEP
+		h.mu.Unlock()
+		h.cfg.Logger.Info("wg peer re-added with updated endpoint",
+			"iface", peer.IfaceName,
+			"peer", safeTruncate(peer.PublicKey, 8),
+			"endpoint", freshEP,
+		)
 	}
 }
 

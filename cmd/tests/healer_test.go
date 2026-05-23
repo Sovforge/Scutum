@@ -23,32 +23,49 @@ func (m *mockWGChecker) ReAddPeer(_ context.Context, peer sync.WGPeer) error {
 }
 
 func TestHealerPeers(t *testing.T) {
-	checker := &mockWGChecker{age: 10 * time.Second}
 	cfg := sync.HealerConfig{
 		Interval:        100 * time.Millisecond,
 		HandshakeMaxAge: 1 * time.Minute,
 	}
-	h := sync.NewHealer(cfg, checker)
-	h.AddPeer(sync.WGPeer{IfaceName: "wg0", PublicKey: "abc="})
 
-	// Run one round
-	h.Start(context.Background())
-	time.Sleep(150 * time.Millisecond)
-	h.Stop()
+	t.Run("fresh peer no re-add", func(t *testing.T) {
+		checker := &mockWGChecker{age: 10 * time.Second}
+		h := sync.NewHealer(cfg, checker)
+		h.AddPeer(sync.WGPeer{IfaceName: "wg0", PublicKey: "abc="})
+		h.Start(context.Background())
+		time.Sleep(150 * time.Millisecond)
+		h.Stop()
+		if checker.reAdds != 0 {
+			t.Errorf("expected 0 re-adds for fresh peer, got %d", checker.reAdds)
+		}
+	})
 
-	if checker.reAdds != 0 {
-		t.Errorf("expected 0 re-adds for fresh peer, got %d", checker.reAdds)
-	}
+	// Stale peers are logged but NOT re-added; WireGuard's own keepalive/rekey
+	// recovers the tunnel without endpoint interference.
+	t.Run("stale peer no re-add", func(t *testing.T) {
+		checker := &mockWGChecker{age: 5 * time.Minute}
+		h := sync.NewHealer(cfg, checker)
+		h.AddPeer(sync.WGPeer{IfaceName: "wg0", PublicKey: "abc="})
+		h.Start(context.Background())
+		time.Sleep(150 * time.Millisecond)
+		h.Stop()
+		if checker.reAdds != 0 {
+			t.Errorf("expected 0 re-adds for stale peer (WG heals itself), got %d", checker.reAdds)
+		}
+	})
 
-	// Make it stale
-	checker.age = 5 * time.Minute
-	h.Start(context.Background())
-	time.Sleep(150 * time.Millisecond)
-	h.Stop()
-
-	if checker.reAdds == 0 {
-		t.Error("expected at least one re-add for stale peer")
-	}
+	// Missing peers (PeerHandshakeAge returns an error) must be re-added.
+	t.Run("missing peer triggers re-add", func(t *testing.T) {
+		checker := &mockWGChecker{err: context.DeadlineExceeded}
+		h := sync.NewHealer(cfg, checker)
+		h.AddPeer(sync.WGPeer{IfaceName: "wg0", PublicKey: "abc="})
+		h.Start(context.Background())
+		time.Sleep(150 * time.Millisecond)
+		h.Stop()
+		if checker.reAdds == 0 {
+			t.Error("expected at least one re-add for missing peer")
+		}
+	})
 }
 
 func TestHealerServices(t *testing.T) {

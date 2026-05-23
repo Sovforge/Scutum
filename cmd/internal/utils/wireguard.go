@@ -133,14 +133,26 @@ func SetupInterface(cfg InterfaceConfig) (*SetupResult, error) {
 	}, nil
 }
 
+func UpdatePeerEndpoint(ifaceName, publicKey, endpoint string) error {
+	runner := DefaultCommandRunner
+	out, err := runner.CombinedOutput("wg", "set", ifaceName, "peer", publicKey, "endpoint", endpoint)
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(out))
+	}
+	return nil
+}
+
 func AddPeer(ifaceName string, publicKey string, endpoint string, allowedIPs string, keepalive int) error {
 	runner := DefaultCommandRunner
 	args := []string{"set", ifaceName, "peer", publicKey, "endpoint", endpoint, "allowed-ips", allowedIPs}
 	if keepalive > 0 {
 		args = append(args, "persistent-keepalive", fmt.Sprint(keepalive))
 	}
-	_, err := runner.Output("wg", args...)
-	return err
+	out, err := runner.CombinedOutput("wg", args...)
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(out))
+	}
+	return nil
 }
 
 func GetStatus(ifaceName string) (string, error) {

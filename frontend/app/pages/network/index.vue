@@ -134,6 +134,7 @@
 <script setup lang="ts">
 import type { MeshNode, MeshEdge } from '~/components/network/MeshGraph.vue'
 import type { NodeStatus } from '~/components/ui/StatusDot.vue'
+import type { PeerStatus } from '~/composables/useApi'
 
 definePageMeta({ layout: 'default' })
 
@@ -144,29 +145,68 @@ interface Connection {
 
 const api = useApi()
 
-const rawNodes = ref<NodeRecord[]>([])
-const selected = ref<string>('')
+const rawNodes  = ref<NodeRecord[]>([])
+const wgPeers   = ref<PeerStatus[]>([])
+const selected  = ref<string>('')
+const hubNodeId = ref<string>('')
 
 onMounted(async () => {
   try {
     rawNodes.value = await api.listNodes()
-    selected.value = rawNodes.value[0]?.id ?? ''
+    // The hub is the local node — first entry that has type 'hub' or 'combined', else first
+    const hub = rawNodes.value.find(n => n.type === 'hub' || n.type === 'combined') ?? rawNodes.value[0]
+    hubNodeId.value = hub?.id ?? ''
+    selected.value  = rawNodes.value[0]?.id ?? ''
+  } catch {}
+  try {
+    wgPeers.value = await api.getMeshPeers()
   } catch {}
 })
 
-const peers = computed(() => rawNodes.value.map(n => ({
-  id:            n.id,
-  name:          n.name,
-  role:          n.type,
-  status:        'healthy' as NodeStatus,
-  meshIp:        n.address,
-  endpoint:      n.address,
-  rtt:           '—',
-  lastHandshake: '—',
-  rx:            '—',
-  tx:            '—',
-  pubkey:        n.public_key,
-})))
+function qualityToStatus(q: 'good' | 'degraded' | 'dead'): NodeStatus {
+  return q === 'good' ? 'healthy' : q === 'degraded' ? 'degraded' : 'offline'
+}
+
+function fmtBytes(b: number): string {
+  if (b >= 1_073_741_824) return (b / 1_073_741_824).toFixed(1) + ' GB'
+  if (b >= 1_048_576)     return (b / 1_048_576).toFixed(1) + ' MB'
+  if (b >= 1024)          return (b / 1024).toFixed(1) + ' KB'
+  return b + ' B'
+}
+
+function fmtHandshake(ts: number): string {
+  if (!ts) return '—'
+  const age = Math.floor(Date.now() / 1000) - ts
+  if (age < 60)   return `${age}s ago`
+  if (age < 3600) return `${Math.floor(age / 60)}m ago`
+  return `${Math.floor(age / 3600)}h ago`
+}
+
+const peers = computed(() => {
+  // Start with enrolled nodes; overlay live WireGuard data when available
+  const peerMap: Record<string, PeerStatus> = {}
+  for (const p of wgPeers.value) {
+    const id = p.node_id ?? p.public_key
+    peerMap[id] = p
+  }
+
+  return rawNodes.value.map(n => {
+    const live = peerMap[n.id] ?? peerMap[n.public_key]
+    return {
+      id:            n.id,
+      name:          n.name,
+      role:          n.type,
+      status:        live ? qualityToStatus(live.quality) : 'healthy' as NodeStatus,
+      meshIp:        live?.allowed_ips ?? n.address,
+      endpoint:      live?.endpoint ?? n.address,
+      rtt:           '—',
+      lastHandshake: live ? fmtHandshake(live.last_handshake) : '—',
+      rx:            live ? fmtBytes(live.rx_bytes) : '—',
+      tx:            live ? fmtBytes(live.tx_bytes) : '—',
+      pubkey:        n.public_key,
+    }
+  })
+})
 
 const selectedPeer = computed(() => peers.value.find(p => p.id === selected.value))
 
@@ -174,9 +214,37 @@ const graphNodes = computed<MeshNode[]>(() =>
   peers.value.map(p => ({ id: p.id, label: p.name, role: p.role, status: p.status }))
 )
 
-const graphEdges = computed<MeshEdge[]>(() => [])
+// Each WireGuard peer is an edge from hub → that node
+const graphEdges = computed<MeshEdge[]>(() => {
+  if (!hubNodeId.value) return []
+  return wgPeers.value
+    .filter(p => p.node_id && p.node_id !== hubNodeId.value)
+    .map(p => ({
+      source:  hubNodeId.value,
+      target:  p.node_id!,
+      quality: p.quality,
+    }))
+})
 
-const connections = computed<Connection[]>(() => [])
+const connections = computed<Connection[]>(() => {
+  const hubPeer = peers.value.find(p => p.id === hubNodeId.value)
+  const hubName = hubPeer?.name ?? 'Hub'
+  return wgPeers.value
+    .filter(p => p.node_id)
+    .map(p => {
+      const nodeName = rawNodes.value.find(n => n.id === p.node_id)?.name ?? p.node_id ?? p.public_key
+      return {
+        from:          hubName,
+        to:            nodeName,
+        quality:       p.quality,
+        latency:       '—',
+        rx:            fmtBytes(p.rx_bytes),
+        tx:            fmtBytes(p.tx_bytes),
+        lastHandshake: fmtHandshake(p.last_handshake),
+        allowedIps:    p.allowed_ips ?? '—',
+      }
+    })
+})
 
 function statusVariant(s: NodeStatus): 'success' | 'warning' | 'danger' {
   return s === 'healthy' ? 'success' : s === 'degraded' ? 'warning' : 'danger'

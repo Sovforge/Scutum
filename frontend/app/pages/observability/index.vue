@@ -25,8 +25,8 @@
           </select>
           <select v-if="logSourceMode === 'docker'" v-model="selectedContainerId" class="select-input">
             <option value="">Select container…</option>
-            <option v-for="c in containers" :key="c.Id" :value="c.Id">
-              {{ c.Names[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12) }}
+            <option v-for="c in rawContainers" :key="c.Id" :value="c.Id">
+              {{ c.nodeName }} · {{ c.Names[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12) }}
             </option>
           </select>
           <div class="search-wrap">
@@ -51,8 +51,34 @@
           </button>
         </template>
 
-        <!-- Traces controls (placeholder — no data yet) -->
-        <template v-if="activeTab === 'traces'" />
+            <!-- Traces controls -->
+        <template v-if="activeTab === 'traces'">
+          <select v-model="traceSourceFilter" class="select-input">
+            <option value="">All sources</option>
+            <option value="internal">Internal</option>
+            <option value="otlp">OTLP</option>
+            <option value="docker">Docker</option>
+            <option value="k8s">Kubernetes</option>
+          </select>
+          <div class="search-wrap">
+            <Icon name="lucide:search" size="13" class="search-icon" />
+            <input v-model="traceQuery" class="search-input" placeholder="Filter by name / service…" />
+          </div>
+          <button class="icon-btn" title="Refresh" @click="refreshTraces">
+            <Icon name="lucide:refresh-cw" size="13" :class="{ spin: tracesLoading }" />
+          </button>
+        </template>
+
+        <!-- OTel Metrics controls -->
+        <template v-if="activeTab === 'otelmetrics'">
+          <div class="search-wrap">
+            <Icon name="lucide:search" size="13" class="search-icon" />
+            <input v-model="otelMetricsQuery" class="search-input" placeholder="Filter by name…" />
+          </div>
+          <button class="icon-btn" title="Refresh" @click="refreshOtelMetrics">
+            <Icon name="lucide:refresh-cw" size="13" :class="{ spin: otelMetricsLoading }" />
+          </button>
+        </template>
       </div>
     </div>
 
@@ -117,9 +143,11 @@
           </template>
           <div v-if="metricsLoading" class="loading-hint">Loading…</div>
           <div v-else-if="rawContainers.length === 0" class="loading-hint">No containers found.</div>
-          <table v-else class="stats-table">
+          <div v-else class="table-scroll">
+          <table class="stats-table">
             <thead>
               <tr>
+                <th>Node</th>
                 <th>Name</th>
                 <th>Image</th>
                 <th>State</th>
@@ -130,7 +158,8 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="c in rawContainers" :key="c.Id" class="stats-table__row">
+              <tr v-for="c in rawContainers" :key="c.nodeId + c.Id" class="stats-table__row">
+                <td><span class="node-chip" :class="c.nodeId ? 'node-chip--remote' : 'node-chip--local'">{{ c.nodeName }}</span></td>
                 <td class="ctr-name">{{ containerName(c) }}</td>
                 <td class="ctr-img">{{ shortImage(c.Image) }}</td>
                 <td><span class="ctr-state" :class="`ctr-state--${c.State}`">{{ c.State }}</span></td>
@@ -178,6 +207,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
         </UiCard>
 
       </template>
@@ -280,44 +310,135 @@
     <!-- ══════════════ TRACES ══════════════ -->
     <div v-if="activeTab === 'traces'" class="tab-content">
 
-      <UiCard title="Operation Traces">
+      <UiCard title="Spans">
         <template #header-right>
-          <span class="count-label">{{ traces.length }} recorded</span>
+          <span class="count-label">{{ filteredTraces.length }} / {{ traces.length }}</span>
           <button class="hdr-refresh-btn" :disabled="tracesLoading" @click="refreshTraces" title="Refresh">
             <Icon name="lucide:refresh-cw" size="11" :class="{ spin: tracesLoading }" />
           </button>
         </template>
 
         <div v-if="tracesLoading" class="loading-hint">Loading…</div>
-        <div v-else-if="traces.length === 0" class="traces-empty">
+        <div v-else-if="filteredTraces.length === 0" class="traces-empty">
           <Icon name="lucide:git-merge" size="32" class="traces-empty__icon" />
-          <p class="traces-empty__title">No traces recorded yet</p>
-          <p class="traces-empty__sub">Operations are traced automatically. Traces appear here once the server has processed requests.</p>
+          <p class="traces-empty__title">No spans match</p>
+          <p class="traces-empty__sub">HTTP requests are automatically traced. Use the OTLP endpoint or collect from containers to see service spans.</p>
         </div>
-        <table v-else class="stats-table">
-          <thead>
-            <tr>
-              <th>Operation</th>
-              <th>Status</th>
-              <th>Duration</th>
-              <th>Time</th>
-              <th>Error</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(t, i) in traces.slice().reverse()" :key="i" class="stats-table__row">
-              <td class="cell--name">{{ t.name }}</td>
-              <td>
-                <span class="status-badge" :class="t.status === 'ok' ? 'status-badge--ok' : 'status-badge--error'">
-                  {{ t.status }}
-                </span>
-              </td>
-              <td class="cell--mono">{{ t.duration_ms }}ms</td>
-              <td class="cell--muted">{{ formatTs(t.time) }}</td>
-              <td class="cell--muted trace-error">{{ t.error ?? '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-else class="table-scroll">
+          <table class="stats-table">
+            <thead>
+              <tr>
+                <th>Operation</th>
+                <th>Service</th>
+                <th>Source</th>
+                <th>Kind</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(t, i) in filteredTraces" :key="i" class="stats-table__row">
+                <td class="cell--name">
+                  {{ t.name }}
+                  <span v-if="t.trace_id" class="trace-id-chip" :title="t.trace_id">{{ t.trace_id.slice(0, 8) }}</span>
+                </td>
+                <td class="cell--muted">{{ t.service || '—' }}</td>
+                <td><span class="source-badge" :class="`source-badge--${t.source ?? 'internal'}`">{{ t.source ?? 'internal' }}</span></td>
+                <td class="cell--muted">{{ t.kind || 'internal' }}</td>
+                <td>
+                  <span class="status-badge" :class="t.status === 'ok' ? 'status-badge--ok' : t.status === 'error' ? 'status-badge--error' : 'status-badge--muted'">
+                    {{ t.status }}
+                  </span>
+                </td>
+                <td class="cell--mono">{{ t.duration_ms }}ms</td>
+                <td class="cell--muted">{{ formatTs(t.time) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </UiCard>
+
+      <!-- Collect from container -->
+      <UiCard title="Collect from Container">
+        <div class="collect-row">
+          <select v-model="collectContainerId" class="select-input select-input--grow">
+            <option value="">Select container…</option>
+            <option v-for="c in rawContainers" :key="c.Id" :value="c.Id">
+              {{ c.nodeName }} · {{ c.Names[0]?.replace(/^\//, '') ?? c.Id.slice(0,12) }}
+            </option>
+          </select>
+          <button class="refresh-btn" :disabled="collectingContainer || !collectContainerId" @click="collectFromContainer">
+            <Icon name="lucide:download" size="13" :class="{ spin: collectingContainer }" /> Collect
+          </button>
+        </div>
+        <p class="collect-hint">Scans the last 200 log lines for structured JSON spans (supports OTEL, structured loggers).</p>
+      </UiCard>
+
+    </div>
+
+    <!-- ══════════════ OTEL METRICS ══════════════ -->
+    <div v-if="activeTab === 'otelmetrics'" class="tab-content">
+
+      <UiCard title="Metric Data Points">
+        <template #header-right>
+          <span class="count-label">{{ filteredOtelMetrics.length }} points</span>
+          <button class="hdr-refresh-btn" :disabled="otelMetricsLoading" @click="refreshOtelMetrics" title="Refresh">
+            <Icon name="lucide:refresh-cw" size="11" :class="{ spin: otelMetricsLoading }" />
+          </button>
+        </template>
+
+        <div v-if="otelMetricsLoading" class="loading-hint">Loading…</div>
+        <div v-else-if="filteredOtelMetrics.length === 0" class="traces-empty">
+          <Icon name="lucide:activity" size="32" class="traces-empty__icon" />
+          <p class="traces-empty__title">No metrics yet</p>
+          <p class="traces-empty__sub">Push metrics via <code class="inline-code">POST /api/otlp/v1/metrics</code> or scrape a container's Prometheus endpoint below.</p>
+        </div>
+        <div v-else class="table-scroll">
+          <table class="stats-table">
+            <thead>
+              <tr><th>Metric</th><th>Service</th><th>Source</th><th>Type</th><th>Value</th><th>Time</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(m, i) in filteredOtelMetrics" :key="i" class="stats-table__row">
+                <td class="cell--name">{{ m.name }}</td>
+                <td class="cell--muted">{{ m.service || '—' }}</td>
+                <td><span class="source-badge" :class="`source-badge--${m.source ?? 'internal'}`">{{ m.source ?? '—' }}</span></td>
+                <td class="cell--muted">{{ m.type }}</td>
+                <td class="cell--mono">{{ m.value.toFixed(4) }}</td>
+                <td class="cell--muted">{{ formatTs(m.time) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </UiCard>
+
+      <!-- Scrape container Prometheus endpoint -->
+      <UiCard title="Scrape Container Metrics">
+        <div class="collect-row">
+          <select v-model="scrapeContainerId" class="select-input select-input--grow">
+            <option value="">Select container…</option>
+            <option v-for="c in rawContainers" :key="c.Id" :value="c.Id">
+              {{ c.nodeName }} · {{ c.Names[0]?.replace(/^\//, '') ?? c.Id.slice(0,12) }}
+            </option>
+          </select>
+          <input v-model="scrapePort" class="port-input" placeholder="Port" />
+          <button class="refresh-btn" :disabled="scrapeLoading || !scrapeContainerId" @click="runContainerScrape">
+            <Icon name="lucide:zap" size="13" :class="{ spin: scrapeLoading }" /> Scrape
+          </button>
+        </div>
+        <p class="collect-hint">Hits <code class="inline-code">http://&lt;container-ip&gt;:{{ scrapePort }}/metrics</code> and ingests Prometheus-format data.</p>
+      </UiCard>
+
+      <!-- OTLP endpoint info -->
+      <UiCard title="OTLP Endpoint">
+        <dl class="info-list">
+          <div class="info-list__row"><dt>Traces</dt><dd class="cell--mono">POST /api/otlp/v1/traces</dd></div>
+          <div class="info-list__row"><dt>Logs</dt>  <dd class="cell--mono">POST /api/otlp/v1/logs</dd></div>
+          <div class="info-list__row"><dt>Metrics</dt><dd class="cell--mono">POST /api/otlp/v1/metrics</dd></div>
+          <div class="info-list__row"><dt>Auth</dt>   <dd class="cell--muted">Bearer token (same as API)</dd></div>
+          <div class="info-list__row"><dt>Format</dt> <dd class="cell--muted">OTLP JSON (application/json)</dd></div>
+        </dl>
       </UiCard>
 
     </div>
@@ -330,12 +451,14 @@ definePageMeta({ layout: 'default' })
 
 const api = useApi()
 const { getToken } = useAuth()
+const nodesStore = useNodesStore()
 
-type TabId = 'logs' | 'metrics' | 'traces'
+type TabId = 'logs' | 'metrics' | 'traces' | 'otelmetrics'
 const tabs = [
-  { id: 'logs'    as TabId, icon: 'lucide:scroll-text', label: 'Logs'    },
-  { id: 'metrics' as TabId, icon: 'lucide:bar-chart-2', label: 'Metrics' },
-  { id: 'traces'  as TabId, icon: 'lucide:git-merge',   label: 'Traces'  },
+  { id: 'logs'        as TabId, icon: 'lucide:scroll-text',  label: 'Logs'    },
+  { id: 'metrics'     as TabId, icon: 'lucide:bar-chart-2',  label: 'Metrics' },
+  { id: 'traces'      as TabId, icon: 'lucide:git-merge',    label: 'Traces'  },
+  { id: 'otelmetrics' as TabId, icon: 'lucide:activity',     label: 'OTel Metrics' },
 ]
 const activeTab = ref<TabId>('logs')
 
@@ -350,8 +473,10 @@ const logLevel            = ref('')
 const logFollow           = ref(true)
 const logLoading          = ref(false)
 const logPanel            = ref<HTMLElement | null>(null)
-const containers          = ref<DockerContainer[]>([])
 const selectedContainerId = ref('')
+const selectedContainerNodeId = computed(() =>
+  rawContainers.value.find(c => c.Id === selectedContainerId.value)?.nodeId ?? null
+)
 
 function formatTs(iso: string): string {
   try { return new Date(iso).toLocaleTimeString() } catch { return iso }
@@ -369,15 +494,18 @@ async function loadAppLogs() {
 
 let streamAbort: AbortController | null = null
 
-async function streamLines(url: string, parseLine: (line: string) => LogLine | null) {
+async function streamLines(url: string, parseLine: (line: string) => LogLine | null, explicitNodeId?: string | null) {
   if (streamAbort) { streamAbort.abort() }
   streamAbort = new AbortController()
   logLoading.value = true
   logs.value = []
   const token = getToken()
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  const nodeId = explicitNodeId !== undefined ? explicitNodeId : nodesStore.selectedId
+  if (nodeId) headers['X-Target-Node'] = nodeId
   try {
     const resp = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers,
       signal: streamAbort.signal,
     })
     if (!resp.ok) { logLoading.value = false; return }
@@ -432,7 +560,7 @@ async function refreshLogs() {
   } else if (logSourceMode.value === 'k8s') {
     streamLines('/api/kubernetes/events', parseK8sLine)
   } else if (logSourceMode.value === 'docker' && selectedContainerId.value) {
-    streamLines(`/api/docker/containers/${selectedContainerId.value}/logs`, parseDockerLine)
+    streamLines(`/api/docker/containers/${selectedContainerId.value}/logs`, parseDockerLine, selectedContainerNodeId.value)
   }
 }
 
@@ -462,7 +590,14 @@ const metricsTabs = [
 const metricsTab = ref<MetricsTabId>('docker')
 
 // ── Metrics ───────────────────────────────────────────────────────────────
-const rawContainers  = ref<DockerContainer[]>([])
+interface NodeContainer {
+  Id: string; Names: string[]; Image: string; Status: string; State: string
+  Ports: Array<{ PrivatePort?: number; PublicPort?: number; Type?: string }>
+  nodeId: string | null   // null = local hub
+  nodeName: string
+}
+
+const rawContainers  = ref<NodeContainer[]>([])
 const metricsLoading = ref(false)
 
 interface K8sSummary {
@@ -498,7 +633,7 @@ async function refreshStats() {
   if (running.length === 0) return
   statsLoading.value = true
   const results = await Promise.allSettled(
-    running.map(c => api.getContainerStats(c.Id).then(s => [c.Id, s] as [string, ContainerStat]))
+    running.map(c => api.getContainerStats(c.Id, c.nodeId).then(s => [c.Id, s] as [string, ContainerStat]))
   )
   const map: Record<string, ContainerStat> = {}
   for (const r of results) {
@@ -522,9 +657,18 @@ async function refreshMetrics() {
   metricsLoading.value = true
   k8sLoading.value     = true
   try {
-    const ctrs = await api.listContainers()
-    rawContainers.value = ctrs
-    containers.value    = ctrs
+    const nodes = await api.listNodes().catch(() => [] as NodeRecord[])
+    const all: NodeContainer[] = []
+
+    const localCtrs = await api.listContainers().catch(() => [])
+    all.push(...localCtrs.map(c => ({ ...c, nodeId: null, nodeName: 'Local' })))
+
+    for (const n of nodes.filter(n => n.type !== 'hub')) {
+      const ctrs = await api.listContainers(n.id).catch(() => [])
+      all.push(...ctrs.map(c => ({ ...c, nodeId: n.id, nodeName: n.name })))
+    }
+
+    rawContainers.value = all
   } catch {} finally {
     metricsLoading.value = false
   }
@@ -537,9 +681,11 @@ async function refreshMetrics() {
 }
 
 const metricsSummary = computed(() => {
-  const running = rawContainers.value.filter(c => c.State === 'running').length
-  const stopped = rawContainers.value.length - running
+  const nodeCount = new Set(rawContainers.value.map(c => c.nodeName)).size
+  const running   = rawContainers.value.filter(c => c.State === 'running').length
+  const stopped   = rawContainers.value.length - running
   return [
+    { label: 'Nodes',      value: String(nodeCount),                  icon: 'lucide:server',       sub: 'in mesh',     cls: ''                                   },
     { label: 'Containers', value: String(rawContainers.value.length), icon: 'lucide:box',          sub: 'total',       cls: ''                                   },
     { label: 'Running',    value: String(running),                    icon: 'lucide:circle-check', sub: 'containers',  cls: running > 0 ? 'val--ok' : ''         },
     { label: 'Stopped',    value: String(stopped),                    icon: 'lucide:circle-x',     sub: 'containers',  cls: stopped > 0 ? 'val--warn' : 'val--ok'},
@@ -555,15 +701,83 @@ function shortImage(image: string): string {
 }
 
 // ── Traces ────────────────────────────────────────────────────────────────
-const traces        = ref<TraceEntry[]>([])
-const tracesLoading = ref(false)
+const traces           = ref<TraceEntry[]>([])
+const tracesLoading    = ref(false)
+const traceSourceFilter = ref('')
+const traceQuery        = ref('')
+
+const filteredTraces = computed(() =>
+  traces.value.filter(t => {
+    if (traceSourceFilter.value && t.source !== traceSourceFilter.value) return false
+    if (traceQuery.value) {
+      const q = traceQuery.value.toLowerCase()
+      return (t.name?.toLowerCase().includes(q) || t.service?.toLowerCase().includes(q))
+    }
+    return true
+  })
+)
 
 async function refreshTraces() {
   tracesLoading.value = true
   try { traces.value = await api.listTraces() } catch {} finally { tracesLoading.value = false }
 }
 
-watch(activeTab, tab => { if (tab === 'traces' && traces.value.length === 0) refreshTraces() })
+// Collect traces from a specific container
+const collectContainerId  = ref('')
+const collectingContainer = ref(false)
+const containerTraces     = ref<TraceEntry[]>([])
+
+async function collectFromContainer() {
+  if (!collectContainerId.value) return
+  collectingContainer.value = true
+  try {
+    const spans = await api.getContainerTraces(collectContainerId.value)
+    containerTraces.value = spans
+    traces.value = [...traces.value, ...spans]
+  } catch {} finally { collectingContainer.value = false }
+}
+
+// ── OTel Metrics ──────────────────────────────────────────────────────────
+const otelMetrics        = ref<import('~/composables/useApi').MetricPoint[]>([])
+const otelMetricsLoading = ref(false)
+const otelMetricsQuery   = ref('')
+
+const filteredOtelMetrics = computed(() => {
+  if (!otelMetricsQuery.value) return otelMetrics.value
+  const q = otelMetricsQuery.value.toLowerCase()
+  return otelMetrics.value.filter((m: import('~/composables/useApi').MetricPoint) =>
+    m.name.toLowerCase().includes(q) || m.service?.toLowerCase().includes(q))
+})
+
+async function refreshOtelMetrics() {
+  otelMetricsLoading.value = true
+  try { otelMetrics.value = await api.listMetrics() } catch {} finally { otelMetricsLoading.value = false }
+}
+
+// Container metrics scrape
+const scrapeContainerId = ref('')
+const scrapePort        = ref('9090')
+const scrapeLoading     = ref(false)
+
+async function runContainerScrape() {
+  if (!scrapeContainerId.value) return
+  scrapeLoading.value = true
+  try {
+    const pts = await api.scrapeContainerMetrics(scrapeContainerId.value, scrapePort.value)
+    otelMetrics.value = [...otelMetrics.value, ...pts]
+  } catch {} finally { scrapeLoading.value = false }
+}
+
+watch(activeTab, tab => {
+  if (tab === 'traces' && traces.value.length === 0) refreshTraces()
+  if (tab === 'otelmetrics' && otelMetrics.value.length === 0) refreshOtelMetrics()
+})
+
+watch(() => nodesStore.selectedId, () => {
+  refreshLogs()
+  refreshTraces()
+  refreshOtelMetrics()
+})
 
 onMounted(() => { loadAppLogs(); refreshMetrics() })
 onUnmounted(() => { if (streamAbort) streamAbort.abort() })
@@ -573,7 +787,8 @@ onUnmounted(() => { if (streamAbort) streamAbort.abort() })
 .obs-page {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -616,6 +831,7 @@ onUnmounted(() => { if (streamAbort) streamAbort.abort() })
 /* ── Tab content ────────────────────────────────────────────────────────── */
 .tab-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 1.75rem 2rem;
   display: flex;
@@ -918,7 +1134,8 @@ onUnmounted(() => { if (streamAbort) streamAbort.abort() })
 .info-list__row dd { color: var(--text-secondary); margin: 0; font-weight: 600; }
 
 /* ── Stats table ──────────────────────────────────────────────────────────── */
-.stats-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.table-scroll { overflow-x: auto; width: 100%; }
+.stats-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 0.8rem; }
 .stats-table th {
   text-align: left; padding: 0 1rem 0.625rem;
   font-weight: 500; font-size: 0.68rem; text-transform: uppercase;
@@ -955,6 +1172,68 @@ onUnmounted(() => { if (streamAbort) streamAbort.abort() })
 .hdr-refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .loading-hint { padding: 1.5rem; text-align: center; color: var(--text-dim); font-size: 0.82rem; }
 .trace-error  { font-family: monospace; font-size: 0.72rem; max-width: 20rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── OTEL source / kind badges ────────────────────────────────────────────── */
+.source-badge {
+  display: inline-flex;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.source-badge--internal { background: rgba(96,165,250,0.1);  color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+.source-badge--otlp     { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.3); }
+.source-badge--docker   { background: rgba(52,211,153,0.1);  color: #34d399; border: 1px solid rgba(52,211,153,0.3); }
+.source-badge--k8s      { background: rgba(251,191,36,0.1);  color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+
+.trace-id-chip {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-family: monospace;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  padding: 0 0.3rem;
+  vertical-align: middle;
+}
+
+/* ── Collect / scrape controls ─────────────────────────────────────────────── */
+.collect-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.select-input--grow { flex: 1; min-width: 180px; }
+.port-input {
+  width: 5rem;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.375rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  outline: none;
+}
+.port-input:focus { border-color: var(--accent); }
+.collect-hint {
+  margin-top: 0.625rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.inline-code {
+  font-family: monospace;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  padding: 0 0.3rem;
+  font-size: 0.72rem;
+}
+.status-badge--muted { background: var(--bg-overlay); color: var(--text-muted); border: 1px solid var(--border); }
 
 /* ── Container / audit compact tables ────────────────────────────────────── */
 .ctr-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
@@ -997,4 +1276,15 @@ onUnmounted(() => { if (streamAbort) streamAbort.abort() })
 .audit-path { font-family: monospace; font-size: 0.72rem; color: var(--text-tertiary); }
 .audit-action { font-size: 0.75rem; color: var(--text-secondary); }
 .audit-ts { font-size: 0.72rem; color: var(--text-dim); white-space: nowrap; }
+
+.node-chip {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.node-chip--local  { background: rgba(96,165,250,0.1);  color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+.node-chip--remote { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.3); }
 </style>

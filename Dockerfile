@@ -17,15 +17,14 @@ FROM golang:1.25-alpine AS sbom
 RUN apk add --no-cache curl
 RUN curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
 WORKDIR /app
-COPY --from=builder /app/scutum .
 COPY --from=builder /app/go.mod /app/go.sum ./
-RUN syft /app/scutum -o cyclonedx-json > /app/sbom.json
+RUN syft dir:/app -o cyclonedx-json=/app/sbom.json
 
 FROM alpine:3.21
 RUN apk add --no-cache curl wireguard-tools iproute2
 WORKDIR /app
-COPY --from=builder /app/scutum .
-COPY --from=sbom /app/sbom.json .
+COPY --from=builder /app/scutum /app/scutum
+COPY --from=sbom /app/sbom.json /app/sbom.json
 LABEL org.opencontainers.image.title="Scutum" \
       org.opencontainers.image.description="Sovereign P2P infrastructure orchestration" \
       com.scutum.sbom="/app/sbom.json"

@@ -30,6 +30,32 @@ func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE audit_logs ADD COLUMN actor VARCHAR(255) NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN actor_id VARCHAR(255) NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN outcome VARCHAR(20) NOT NULL DEFAULT 'success'`,
+		// OTEL span fields
+		`ALTER TABLE traces ADD COLUMN trace_id VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN span_id VARCHAR(32) NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN parent_span_id VARCHAR(32) NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN service VARCHAR(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE traces ADD COLUMN source VARCHAR(20) NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE traces ADD COLUMN attributes JSON`,
+		// OTEL log fields
+		`ALTER TABLE system_logs ADD COLUMN service VARCHAR(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN source VARCHAR(20) NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE system_logs ADD COLUMN trace_id VARCHAR(64) NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN span_id VARCHAR(32) NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN attributes JSON`,
+		// otel_metrics table (MySQL runs one statement at a time)
+		`CREATE TABLE IF NOT EXISTS otel_metrics (
+			id         VARCHAR(255) PRIMARY KEY,
+			time       TIMESTAMP NOT NULL,
+			name       VARCHAR(255) NOT NULL,
+			service    VARCHAR(255) NOT NULL DEFAULT '',
+			source     VARCHAR(50) NOT NULL DEFAULT '',
+			type       VARCHAR(20) NOT NULL DEFAULT 'gauge',
+			value      DOUBLE NOT NULL DEFAULT 0,
+			labels     JSON,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
 	} {
 		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
 	}
@@ -40,7 +66,7 @@ const mysqlSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
     id          VARCHAR(255) PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
-    type        ENUM('hub', 'peer', 'edge') NOT NULL,
+    type        ENUM('hub', 'remote', 'combined') NOT NULL,
     address     VARCHAR(255) NOT NULL,
     public_key  TEXT NOT NULL,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

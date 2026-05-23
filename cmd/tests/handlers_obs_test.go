@@ -28,13 +28,17 @@ func (m *mockObsStore) ListTraces(ctx context.Context, limit int) ([]utils.Trace
 	return m.traces, m.err
 }
 
+func (m *mockObsStore) ListMetrics(ctx context.Context, limit int, name, service string) ([]utils.MetricPoint, error) {
+	return nil, m.err
+}
+
 func TestObservabilityHandler(t *testing.T) {
 	store := &mockObsStore{
 		logs:   []utils.LogEntry{{Message: "system log"}},
 		audit:  []utils.AuditEntry{{Action: "audit log"}},
 		traces: []utils.TraceEntry{{Name: "trace-1"}},
 	}
-	h := handlers.NewObservabilityHandler(store)
+	h := handlers.NewObservabilityHandler(store, nil)
 
 	t.Run("HandleLogs", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/logs?limit=10", nil)

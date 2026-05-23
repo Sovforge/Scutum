@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -31,9 +32,60 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE audit_logs ADD COLUMN actor TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN actor_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success'`,
+		// OTEL span fields on traces table
+		`ALTER TABLE traces ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN span_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN parent_span_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN service TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN kind TEXT NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE traces ADD COLUMN source TEXT NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE traces ADD COLUMN attributes TEXT NOT NULL DEFAULT '{}'`,
+		// OTEL fields on system_logs table
+		`ALTER TABLE system_logs ADD COLUMN service TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN source TEXT NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE system_logs ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN span_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN attributes TEXT NOT NULL DEFAULT '{}'`,
 	} {
 		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
 	}
+
+	// otel_metrics table (new — safe to CREATE IF NOT EXISTS)
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS otel_metrics (
+		id         TEXT PRIMARY KEY,
+		time       DATETIME NOT NULL,
+		name       TEXT NOT NULL,
+		service    TEXT NOT NULL DEFAULT '',
+		source     TEXT NOT NULL DEFAULT '',
+		type       TEXT NOT NULL DEFAULT 'gauge',
+		value      REAL NOT NULL DEFAULT 0,
+		labels     TEXT NOT NULL DEFAULT '{}',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`);
+
+	// Recreate nodes table if it was created with the old type CHECK ('hub','peer','edge').
+	var typeCheck string
+	db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='nodes'`).Scan(&typeCheck)
+	if typeCheck != "" && !strings.Contains(typeCheck, "remote") {
+		if _, err := db.ExecContext(ctx, `
+			ALTER TABLE nodes RENAME TO nodes_old;
+			CREATE TABLE nodes (
+				id          TEXT PRIMARY KEY,
+				name        TEXT NOT NULL,
+				type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
+				address     TEXT NOT NULL,
+				public_key  TEXT NOT NULL,
+				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+			INSERT INTO nodes SELECT id, name,
+				CASE type WHEN 'peer' THEN 'remote' WHEN 'edge' THEN 'combined' ELSE type END,
+				address, public_key, created_at FROM nodes_old;
+			DROP TABLE nodes_old;
+		`); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -41,7 +93,7 @@ const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
 			id          TEXT PRIMARY KEY,
 			name        TEXT NOT NULL,
-			type        TEXT NOT NULL CHECK(type IN ('hub','peer','edge')),
+			type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
 			address     TEXT NOT NULL,
 			public_key  TEXT NOT NULL,
 			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

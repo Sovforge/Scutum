@@ -91,6 +91,10 @@ func (m *mockSetupStore) CreateNode(ctx context.Context, n store.NodeRecord) err
 	return nil
 }
 
+func (m *mockSetupStore) UpsertWGPeer(ctx context.Context, p store.WGPeerRecord) error {
+	return nil
+}
+
 func TestHandleSetupStatus(t *testing.T) {
 	tests := []struct {
 		name           string

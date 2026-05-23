@@ -146,6 +146,12 @@ func SetupInterface(cfg InterfaceConfig) (*SetupResult, error) {
 	}, nil
 }
 
+func UpdatePeerEndpoint(ifaceName, publicKey, endpoint string) error {
+	runner := DefaultCommandRunner
+	_, err := runner.Output("wg", "set", ifaceName, "peer", publicKey, "endpoint", endpoint)
+	return err
+}
+
 func AddPeer(ifaceName string, publicKey string, endpoint string, allowedIPs string) error {
 	runner := DefaultCommandRunner
 	_, err := runner.Output("wg", "set", ifaceName,

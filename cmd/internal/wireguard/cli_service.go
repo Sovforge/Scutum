@@ -9,6 +9,10 @@ func (s *CLIService) AddPeer(iface, publicKey, endpoint, allowedIPs string, keep
 	return utils.AddPeer(iface, publicKey, endpoint, allowedIPs, keepalive)
 }
 
+func (s *CLIService) UpdatePeerEndpoint(iface, publicKey, endpoint string) error {
+	return utils.UpdatePeerEndpoint(iface, publicKey, endpoint)
+}
+
 func (s *CLIService) GetStatus(iface string) (string, error) {
 	return utils.GetStatus(iface)
 }

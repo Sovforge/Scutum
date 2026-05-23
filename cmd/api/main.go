@@ -2,12 +2,16 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"embed"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -168,6 +172,7 @@ func main() {
 							}
 						} else {
 							logger.Info("restored wireguard interface wg0")
+							restoreWGPeers(ctx, db, logger)
 						}
 					}
 				}
@@ -244,19 +249,38 @@ func main() {
 		logger.Info("mTLS enabled", "ca_file", caCertFile)
 	}
 
+	// meshTLSConfig is used for node-to-node HTTPS API calls (sync, proxy, endpoint
+	// registration). When no CA cert is configured (self-signed certs), skip server
+	// verification — security comes from WireGuard + HMAC signatures on each request.
+	meshTLSConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caCertFile != "" {
+		meshTLSConfig.RootCAs = clientTLSConfig.RootCAs
+	} else if useTLS {
+		meshTLSConfig.InsecureSkipVerify = true //nolint:gosec
+		logger.Info("no CA cert configured — internal API calls will skip TLS verification")
+	}
+
 	// --- Sync: Pusher for edge config distribution ---
 	hmacKey, err := loadOrGenerateHMACKey(ctx, db, secretsDir)
 	if err != nil {
 		logger.Fatal("hmac key failed", "error", err)
 	}
 	handlers.SetProxyHMACKey(hmacKey)
-	auth.SetHubHMACKey(hmacKey)
+	handlers.SetProxyTLSConfig(meshTLSConfig)
+	// Remote nodes store the hub's HMAC key as "hub_hmac_key" during setup.
+	// Use it for verifying hub-proxied requests instead of the locally generated key.
+	if hubKey, err := db.GetSecret(ctx, "hub_hmac_key"); err == nil && len(hubKey) > 0 {
+		auth.SetHubHMACKey(hubKey)
+	} else {
+		auth.SetHubHMACKey(hmacKey)
+	}
 	pusher := sync.NewPusher(sync.PushConfig{HMACKey: hmacKey})
 
-	// Register existing nodes as edges in background (with retry)
+	// Register existing nodes as edges in background (with retry).
+	// For hub-type installs this also wires up FreshEndpoint lookups on healer peers.
 	go func() {
 		for attempt := 1; attempt <= 5; attempt++ {
-			if err := registerEdges(ctx, db, pusher, healer, clientTLSConfig); err != nil {
+			if err := registerEdges(ctx, db, pusher, healer, meshTLSConfig); err != nil {
 				logger.Error("background edge registration failed, retrying",
 					"attempt", attempt, "error", err)
 				select {
@@ -271,6 +295,11 @@ func main() {
 		}
 		logger.Error("edge registration failed after all attempts")
 	}()
+
+	// For edge (remote/combined) installs: push our current WireGuard endpoint to
+	// the hub on startup so the hub's wg_peers table stays accurate even when our
+	// public IP or NAT mapping has changed since initial setup.
+	go registerOwnEndpoint(ctx, db, logger, meshTLSConfig)
 
 	// Start rate-limiter cleanup to prevent memory growth
 	go cleanupVisitors(ctx)
@@ -330,18 +359,34 @@ func main() {
 	s3Ctrl := handlers.NewS3Handler()
 	storageCtrl := handlers.NewStorageHandler(db)
 	wgService := &wireguard.CLIService{}
-	wgCtrl := handlers.NewWireGuardHandler("wg0", wgService, healer)
+	wgCtrl := handlers.NewWireGuardHandler("wg0", wgService, healer, db, db)
+	wgCtrl.SecretsDir = secretsDir
+	wgCtrl.SetPeerStore(db)
+	wgCtrl.SetEndpointStore(db)
 	pluginCtrl := handlers.NewPluginHandler(pluginRuntime, registrar)
 	authCtrl := handlers.NewAuthHandler(db, jwtSecret)
 	nodeCtrl := handlers.NewNodeHandler(db)
 	userCtrl := handlers.NewUserHandler(db)
 	roleCtrl := handlers.NewRoleHandler(db)
-	obsCtrl := handlers.NewObservabilityHandler(db)
+	obsCtrl := handlers.NewObservabilityHandler(db, db)
+	otelCtrl := handlers.NewOTelHandler(db, db)
 	exportCtrl := handlers.NewExportHandler(db)
 	utils.SetObsSink(db)
 	setupCtrl := handlers.NewSetupHandler(db, filepath.Join(secretsDir, "kms.toml"), func(newProvider kms.Provider) {
+		// All secrets written during setup (wg0_config, sync_hmac_key, hub_hmac_key,
+		// etc.) were sealed with the pre-setup KMS. Read what we need before swapping,
+		// swap the provider, then re-wrap every DEK so subsequent reads use the new key.
+		hubKey, hubKeyErr := db.GetSecret(ctx, "hub_hmac_key")
+		oldProvider := db.CurrentKMS()
 		db.SwapKMS(newProvider)
+		if err := db.RotateKeys(ctx, oldProvider); err != nil {
+			logger.Warn("key rotation during setup failed — secrets may be unreadable after restart", "error", err)
+		}
 		logger.Info("kms provider switched", "provider", newProvider.Name())
+		if hubKeyErr == nil && len(hubKey) > 0 {
+			auth.SetHubHMACKey(hubKey)
+			logger.Info("hub HMAC key activated")
+		}
 	})
 
 	// Auth (public)
@@ -440,8 +485,11 @@ func main() {
 
 	// WireGuard
 	apiMux.Handle("POST /network/peer", require("wireguard", "write", wgCtrl.HandleAddPeer))
+	apiMux.Handle("POST /network/register-endpoint", require("wireguard", "write", wgCtrl.HandleRegisterEndpoint))
 	apiMux.Handle("GET /network/status", require("wireguard", "read", wgCtrl.HandleGetStatus))
 	apiMux.Handle("GET /network/mesh-summary", require("wireguard", "read", wgCtrl.HandleMeshSummary))
+	apiMux.Handle("GET /network/peers", require("wireguard", "read", wgCtrl.HandlePeerStatus))
+	apiMux.Handle("GET /network/hub-key", require("admin", "admin", wgCtrl.HandleGetHubKey))
 
 	// Plugin management
 	apiMux.Handle("POST /plugins/load", require("plugins", "admin", pluginCtrl.HandleLoad))
@@ -452,9 +500,21 @@ func main() {
 	// Observability + Audit
 	apiMux.Handle("GET /observability/logs", require("admin", "read", obsCtrl.HandleLogs))
 	apiMux.Handle("GET /observability/traces", require("admin", "read", obsCtrl.HandleTraces))
+	apiMux.Handle("GET /observability/metrics", require("admin", "read", otelCtrl.HandleListMetrics))
 	apiMux.Handle("GET /audit/logs", require("admin", "admin", obsCtrl.HandleAuditLogs))
 	apiMux.Handle("GET /audit/logs/export", require("admin", "admin", obsCtrl.HandleExportAuditLogs))
 	apiMux.Handle("GET /admin/export", require("admin", "admin", exportCtrl.HandleExport))
+
+	// OTLP receivers — authenticated so only enrolled services can push telemetry
+	apiMux.Handle("POST /otlp/v1/traces", require("admin", "read", otelCtrl.HandleOTLPTraces))
+	apiMux.Handle("POST /otlp/v1/logs", require("admin", "read", otelCtrl.HandleOTLPLogs))
+	apiMux.Handle("POST /otlp/v1/metrics", require("admin", "read", otelCtrl.HandleOTLPMetrics))
+
+	// Container / pod telemetry scraping
+	apiMux.Handle("GET /docker/containers/{id}/traces", require("docker", "read", dockerCtrl.HandleContainerTraces))
+	apiMux.Handle("GET /docker/containers/{id}/metrics-scrape", require("docker", "read", dockerCtrl.HandleContainerMetricsScrape))
+	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}/traces", require("kubernetes", "read", kubernetesCtrl.HandlePodTraces))
+	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}/metrics-scrape", require("kubernetes", "read", kubernetesCtrl.HandlePodMetricsScrape))
 
 	// Sync (push config to edges)
 	syncCtrl := handlers.NewSyncHandler(db, pusher, clientTLSConfig)
@@ -477,7 +537,7 @@ func main() {
 	// Auth is scoped to /api/ only; frontend assets are served without authentication
 	// so the browser can load the login page before any credentials exist.
 	// We remove authMW from the global wrapper so that apiMux can manage its own public/private routes.
-	mainMux.Handle("/api/", http.StripPrefix("/api", metricsMiddleware(apiMux)))
+	mainMux.Handle("/api/", http.StripPrefix("/api", metricsMiddleware(tracingMiddleware(logger, apiMux))))
 
 	// Nuxt generates hashed filenames under /_nuxt/ so they can be cached forever.
 	sub, _ := fs.Sub(frontendFS, "dist")
@@ -526,6 +586,7 @@ func main() {
 	if !strings.HasPrefix(port, ":") {
 		port = ":" + port
 	}
+	setupCtrl.APIPort = port
 
 	server := &http.Server{
 		Addr:         port,
@@ -555,6 +616,12 @@ func main() {
 	// Keep main alive until context is cancelled
 	<-ctx.Done()
 	logger.Info("shutting down gracefully...")
+
+	// Release the hub lease immediately on SIGTERM — before server.Shutdown —
+	// so a restarted instance (with a new container hostname) can steal it right
+	// away. Doing this after server.Shutdown risks Docker's stop timeout killing
+	// the process before we get here.
+	_ = db.ReleaseHubLease(context.Background(), holderID)
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -703,38 +770,203 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 	}
 
 	for _, node := range nodes {
-		if node.Type != "edge" {
+		if node.Type != "remote" && node.Type != "combined" {
 			continue
 		}
-		var endpoint string
-		for _, p := range peers {
-			if p.NodeID == node.ID {
-				endpoint = p.Endpoint
-				break
-			}
-		}
-		if endpoint == "" {
+		apiBase := nodeAPIBase(node.Address)
+		if apiBase == "" {
 			continue
 		}
 		token, _ := db.GetSecret(ctx, "edge_token_"+node.ID)
-		sink := sync.NewHTTPEdgeSink(node.ID, endpoint+"/sync", string(token), clientTLSConfig)
+		sink := sync.NewHTTPEdgeSink(node.ID, apiBase+"/sync", string(token), clientTLSConfig)
 		pusher.Register(sink)
 		logger.Info("registered edge", "node_id", node.ID)
 
-		// Also register with healer
+		// Register with healer, wiring FreshEndpoint so the healer re-adds the
+		// peer using the latest DB endpoint if the edge registers a new one.
 		for _, p := range peers {
 			if p.NodeID == node.ID {
+				nodeID := node.ID // capture for closure
 				healer.AddPeer(sync.WGPeer{
-					IfaceName:  "wg0", // assumption: single interface for now
+					IfaceName:  "wg0",
 					PublicKey:  node.PublicKey,
 					Endpoint:   p.Endpoint,
 					AllowedIPs: p.AllowedIPs,
+					FreshEndpoint: func(ctx context.Context) (string, error) {
+						fresh, err := db.GetWGPeer(ctx, nodeID)
+						if err != nil {
+							return "", err
+						}
+						return fresh.Endpoint, nil
+					},
 				})
 				break
 			}
 		}
 	}
 	return nil
+}
+
+// registerOwnEndpoint is called on edge (remote/combined) nodes at startup to
+// push our current WireGuard listen port to the hub. The hub derives the full
+// endpoint as "observed-source-IP:listen_port" and updates its wg_peers table,
+// ensuring the tunnel reconnects even when our NAT mapping or IP has changed.
+func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Logger, tlsConfig *tls.Config) {
+	installType, err := db.GetInstallType(ctx)
+	if err != nil || (installType != store.InstallRemote && installType != store.InstallCombined) {
+		return
+	}
+
+	// Find hub node address.
+	nodes, err := db.ListNodes(ctx)
+	if err != nil {
+		logger.Warn("registerOwnEndpoint: cannot list nodes", "error", err)
+		return
+	}
+	var hubAddr string
+	for _, n := range nodes {
+		if n.Type == "hub" {
+			hubAddr = n.Address
+			break
+		}
+	}
+	if hubAddr == "" {
+		logger.Warn("registerOwnEndpoint: no hub node in DB, skipping")
+		return
+	}
+	hubAPIBase := nodeAPIBase(hubAddr)
+
+	// Our WireGuard public key.
+	pubKeyBytes, err := utils.DefaultCommandRunner.Output("wg", "show", "wg0", "public-key")
+	if err != nil {
+		logger.Warn("registerOwnEndpoint: cannot read wg public key", "error", err)
+		return
+	}
+	pubKey := strings.TrimSpace(string(pubKeyBytes))
+	if pubKey == "" {
+		logger.Warn("registerOwnEndpoint: empty wg public key, skipping")
+		return
+	}
+
+	// Our WireGuard listen port from stored interface config.
+	listenPort := 51820
+	if cfgBytes, err := db.GetSecret(ctx, "wg0_config"); err == nil {
+		var cfg utils.InterfaceConfig
+		if err := json.Unmarshal(cfgBytes, &cfg); err == nil && cfg.Port > 0 {
+			listenPort = cfg.Port
+		}
+	}
+
+	// Hub HMAC key for signing — stored during setup as "hub_hmac_key".
+	hmacKey, err := db.GetSecret(ctx, "hub_hmac_key")
+	if err != nil || len(hmacKey) == 0 {
+		logger.Warn("registerOwnEndpoint: hub_hmac_key not set, skipping endpoint registration")
+		return
+	}
+
+	for attempt := 1; attempt <= 5; attempt++ {
+		if err := callRegisterEndpoint(ctx, hubAPIBase, pubKey, listenPort, hmacKey, tlsConfig); err != nil {
+			logger.Warn("registerOwnEndpoint: attempt failed, retrying",
+				"attempt", attempt, "error", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Duration(attempt*3) * time.Second):
+			}
+			continue
+		}
+		logger.Info("registerOwnEndpoint: endpoint registered with hub",
+			"hub", hubAPIBase, "listen_port", listenPort)
+		return
+	}
+	logger.Error("registerOwnEndpoint: all attempts failed")
+}
+
+// callRegisterEndpoint sends a signed POST to the hub's /api/network/register-endpoint.
+// It uses the same HMAC signing format as hub-proxied requests so the hub's existing
+// auth middleware accepts it without additional setup.
+func callRegisterEndpoint(ctx context.Context, hubAPIBase, pubKey string, listenPort int, hmacKey []byte, tlsConfig *tls.Config) error {
+	body, _ := json.Marshal(map[string]interface{}{
+		"public_key":  pubKey,
+		"listen_port": listenPort,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		hubAPIBase+"/api/network/register-endpoint", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, hmacKey)
+	fmt.Fprintf(mac, "%s\n%s\n%s\n", ts, req.Method, "/api/network/register-endpoint")
+	sig := hex.EncodeToString(mac.Sum(nil))
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Scutum-Hub-Sig", sig)
+	req.Header.Set("X-Scutum-Hub-Ts", ts)
+
+	resp, err := (&http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+	}).Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("hub returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// restoreWGPeers re-adds all WireGuard peers from the database after the
+// interface is brought back up on startup. Without this, the tunnel has no
+// peers after a container restart.
+func restoreWGPeers(ctx context.Context, db *store.Store, logger *utils.Logger) {
+	nodes, err := db.ListNodes(ctx)
+	if err != nil {
+		logger.Warn("restoreWGPeers: failed to list nodes", "error", err)
+		return
+	}
+	peers, err := db.ListWGPeers(ctx)
+	if err != nil {
+		logger.Warn("restoreWGPeers: failed to list peers", "error", err)
+		return
+	}
+	keyByNodeID := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		keyByNodeID[n.ID] = n.PublicKey
+	}
+	for _, p := range peers {
+		pubKey, ok := keyByNodeID[p.NodeID]
+		if !ok || pubKey == "" {
+			continue
+		}
+		if err := utils.AddPeer("wg0", pubKey, p.Endpoint, p.AllowedIPs, 25); err != nil {
+			logger.Warn("restoreWGPeers: failed to re-add peer", "node_id", p.NodeID, "error", err)
+		} else {
+			logger.Info("restoreWGPeers: re-added peer", "node_id", p.NodeID)
+		}
+	}
+}
+
+// nodeAPIBase converts a node's stored address (which may be a WireGuard CIDR
+// like "10.x.x.x/24" or a proper "host:port") into an "https://host:port" base
+// URL suitable for API sync and proxy calls. Returns "" if addr is empty.
+func nodeAPIBase(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	// Strip CIDR suffix (e.g. "10.0.0.2/24" → "10.0.0.2")
+	if idx := strings.Index(addr, "/"); idx != -1 && !strings.Contains(addr[:idx], ":") {
+		addr = addr[:idx]
+	}
+	// Add default port if none present
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":8080"
+	}
+	return "https://" + addr
 }
 
 type responseWriter struct {
@@ -761,6 +993,51 @@ func (rw *responseWriter) Flush() {
 	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// tracingMiddleware creates an OTEL-compatible span for every API request.
+// Health, metrics, and OTLP ingest paths are skipped to avoid noise/recursion.
+func tracingMiddleware(l *utils.Logger, next http.Handler) http.Handler {
+	skip := map[string]bool{
+		"/health": true, "/metrics": true,
+		"/otlp/v1/traces": true, "/otlp/v1/logs": true, "/otlp/v1/metrics": true,
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if skip[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
+		traceID := utils.NewTraceID()
+		spanID := utils.NewSpanID()
+		ctx := utils.WithTraceContext(r.Context(), traceID, spanID)
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(rw, r.WithContext(ctx))
+		elapsed := time.Since(start)
+		status := "ok"
+		errMsg := ""
+		if rw.statusCode >= 400 {
+			status = "error"
+			errMsg = fmt.Sprintf("HTTP %d", rw.statusCode)
+		}
+		utils.AppendSpan(utils.TraceEntry{
+			TraceID:    traceID,
+			SpanID:     spanID,
+			Name:       r.Method + " " + r.URL.Path,
+			Service:    "scutum",
+			Kind:       "server",
+			Time:       start,
+			DurationMs: elapsed.Milliseconds(),
+			Status:     status,
+			Error:      errMsg,
+			Source:     "internal",
+			Attributes: map[string]string{
+				"http.method":      r.Method,
+				"http.route":       r.URL.Path,
+				"http.status_code": strconv.Itoa(rw.statusCode),
+			},
+		})
+	})
 }
 
 func metricsMiddleware(next http.Handler) http.Handler {

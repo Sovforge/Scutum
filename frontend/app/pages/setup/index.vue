@@ -35,7 +35,7 @@
       <div class="setup-card">
 
         <!-- ── Step 0: Welcome ─────────────────────────────────────── -->
-        <template v-if="step === 0">
+        <template v-if="currentStepId === 'welcome'">
           <h2 class="setup-card__heading">Welcome to Scutum</h2>
           <p class="setup-card__desc">
             This wizard configures your Scutum control node. It runs once.
@@ -50,8 +50,96 @@
           </div>
         </template>
 
-        <!-- ── Step 1: Admin account ──────────────────────────────── -->
-        <template v-else-if="step === 1">
+        <!-- ── Step 1: Mesh / WireGuard ───────────────────────────── -->
+        <template v-else-if="currentStepId === 'mesh'">
+          <h2 class="setup-card__heading">Mesh configuration</h2>
+          <p class="setup-card__desc">Configure WireGuard for this node. The public key will be shown after setup completes.</p>
+
+          <div class="form-grid">
+            <div class="form-row">
+              <label class="form-label">Node role</label>
+              <select v-model="mesh.installType" class="form-select">
+                <option value="hub">Hub — accepts inbound peers, must have a public IP/port</option>
+                <option value="remote">Remote — connects outbound to a hub, no public IP needed</option>
+                <option value="combined">Combined — acts as a hub and can connect upstream to another hub</option>
+              </select>
+            </div>
+
+            <div class="form-row">
+              <label class="form-label">Mesh IP address <span class="form-label-hint">(CIDR)</span></label>
+              <input v-model="mesh.address" class="form-input font-mono"
+                :placeholder="mesh.installType === 'remote' ? 'e.g. 10.100.5.2/24 — must be on the hub\'s subnet' : '10.100.5.1/24'" />
+              <p v-if="mesh.installType === 'remote'" class="form-hint">
+                Choose a unique IP on the same subnet as the hub (e.g. if the hub is <code>10.100.5.1/24</code>, use <code>10.100.5.2/24</code>).
+              </p>
+            </div>
+
+            <!-- Listen port: required for hub and combined -->
+            <template v-if="mesh.installType !== 'remote'">
+              <div class="form-row">
+                <label class="form-label">WireGuard listen port <span class="form-label-hint">(UDP)</span></label>
+                <input v-model.number="mesh.listenPort" type="number" class="form-input font-mono" placeholder="51820" />
+              </div>
+            </template>
+
+            <!-- Hub peer fields: required for remote, optional for combined -->
+            <template v-if="mesh.installType !== 'hub'">
+              <div v-if="mesh.installType === 'combined'" class="info-note" style="margin-top:0.25rem">
+                <Icon name="lucide:info" size="13" />
+                <span>For combined mode, upstream hub connection is <strong>optional</strong>. Leave blank to run as a standalone hub.</span>
+              </div>
+              <div class="form-row">
+                <label class="form-label">
+                  Hub endpoint
+                  <span class="form-label-hint">(host:port{{ mesh.installType === 'combined' ? ' — optional' : '' }})</span>
+                </label>
+                <input v-model="mesh.hubEndpoint" class="form-input font-mono" placeholder="1.2.3.4:51820" />
+              </div>
+              <div class="form-row">
+                <label class="form-label">
+                  Hub public key
+                  <span v-if="mesh.installType === 'combined'" class="form-label-hint">(optional)</span>
+                </label>
+                <input v-model="mesh.hubPublicKey" class="form-input font-mono" placeholder="Base64-encoded WireGuard public key" />
+              </div>
+              <div class="form-row">
+                <label class="form-label">
+                  Hub allowed IPs
+                  <span v-if="mesh.installType === 'combined'" class="form-label-hint">(optional)</span>
+                </label>
+                <input v-model="mesh.hubAllowedIPs" class="form-input font-mono" placeholder="e.g. 10.100.5.0/24" />
+                <p class="form-hint">Routes to send through the hub — auto-filled from your mesh IP. Use <code>0.0.0.0/0</code> to route all traffic.</p>
+              </div>
+              <div class="form-row">
+                <label class="form-label">
+                  Hub proxy key
+                  <span class="form-label-hint">(from hub's Enroll Peer dialog)</span>
+                </label>
+                <input v-model="mesh.hubHMACKey" class="form-input font-mono" placeholder="hex key shown in the hub's enrollment dialog" />
+                <p class="form-hint">Allows this node to accept API requests proxied from the hub.</p>
+              </div>
+            </template>
+
+            <!-- Advanced: MTU -->
+            <div class="form-row">
+              <label class="form-label">MTU <span class="form-label-hint">(optional, leave 0 for default 1420)</span></label>
+              <input v-model.number="mesh.mtu" type="number" class="form-input font-mono" placeholder="0" min="0" max="9000" />
+            </div>
+          </div>
+
+          <p v-if="meshError" class="field-error">{{ meshError }}</p>
+
+          <div class="setup-card__actions">
+            <button class="btn btn--ghost" @click="step--">Back</button>
+            <button class="btn btn--primary" :disabled="submitting" @click="nextMesh">
+              <span v-if="submitting" class="btn-spinner" />
+              <span v-else>{{ mesh.installType === 'remote' ? 'Connect to hub →' : 'Continue →' }}</span>
+            </button>
+          </div>
+        </template>
+
+        <!-- ── Step 2: Admin account ──────────────────────────────── -->
+        <template v-else-if="currentStepId === 'account'">
           <h2 class="setup-card__heading">Create admin account</h2>
           <p class="setup-card__desc">This will be the primary superadmin. Additional accounts can be created after setup.</p>
           <div class="form-grid">
@@ -80,8 +168,8 @@
           </div>
         </template>
 
-        <!-- ── Step 2: KMS ────────────────────────────────────────── -->
-        <template v-else-if="step === 2">
+        <!-- ── Step 3: KMS ────────────────────────────────────────── -->
+        <template v-else-if="currentStepId === 'kms'">
           <h2 class="setup-card__heading">Key management</h2>
           <p class="setup-card__desc">
             Scutum encrypts secrets at rest using a master key. Choose where to store that key.
@@ -200,80 +288,8 @@
           </div>
         </template>
 
-        <!-- ── Step 3: Mesh / WireGuard ───────────────────────────── -->
-        <template v-else-if="step === 3">
-          <h2 class="setup-card__heading">Mesh configuration</h2>
-          <p class="setup-card__desc">Configure WireGuard for this node. The public key will be shown after setup completes.</p>
-
-          <div class="form-grid">
-            <div class="form-row">
-              <label class="form-label">Node role</label>
-              <select v-model="mesh.installType" class="form-select">
-                <option value="hub">Hub — accepts inbound peers, must have a public IP/port</option>
-                <option value="remote">Remote — connects outbound to a hub, no public IP needed</option>
-                <option value="combined">Combined — acts as a hub and can connect upstream to another hub</option>
-              </select>
-            </div>
-
-            <div class="form-row">
-              <label class="form-label">Mesh IP address <span class="form-label-hint">(CIDR)</span></label>
-              <input v-model="mesh.address" class="form-input font-mono" placeholder="10.99.0.1/24" />
-            </div>
-
-            <!-- Listen port: required for hub and combined -->
-            <template v-if="mesh.installType !== 'remote'">
-              <div class="form-row">
-                <label class="form-label">WireGuard listen port <span class="form-label-hint">(UDP)</span></label>
-                <input v-model.number="mesh.listenPort" type="number" class="form-input font-mono" placeholder="51820" />
-              </div>
-            </template>
-
-            <!-- Hub peer fields: required for remote, optional for combined -->
-            <template v-if="mesh.installType !== 'hub'">
-              <div v-if="mesh.installType === 'combined'" class="info-note" style="margin-top:0.25rem">
-                <Icon name="lucide:info" size="13" />
-                <span>For combined mode, upstream hub connection is <strong>optional</strong>. Leave blank to run as a standalone hub.</span>
-              </div>
-              <div class="form-row">
-                <label class="form-label">
-                  Hub endpoint
-                  <span class="form-label-hint">(host:port{{ mesh.installType === 'combined' ? ' — optional' : '' }})</span>
-                </label>
-                <input v-model="mesh.hubEndpoint" class="form-input font-mono" placeholder="1.2.3.4:51820" />
-              </div>
-              <div class="form-row">
-                <label class="form-label">
-                  Hub public key
-                  <span v-if="mesh.installType === 'combined'" class="form-label-hint">(optional)</span>
-                </label>
-                <input v-model="mesh.hubPublicKey" class="form-input font-mono" placeholder="Base64-encoded WireGuard public key" />
-              </div>
-              <div class="form-row">
-                <label class="form-label">
-                  Hub allowed IPs
-                  <span v-if="mesh.installType === 'combined'" class="form-label-hint">(optional)</span>
-                </label>
-                <input v-model="mesh.hubAllowedIPs" class="form-input font-mono" placeholder="10.99.0.0/24" />
-              </div>
-            </template>
-
-            <!-- Advanced: MTU -->
-            <div class="form-row">
-              <label class="form-label">MTU <span class="form-label-hint">(optional, leave 0 for default 1420)</span></label>
-              <input v-model.number="mesh.mtu" type="number" class="form-input font-mono" placeholder="0" min="0" max="9000" />
-            </div>
-          </div>
-
-          <p v-if="meshError" class="field-error">{{ meshError }}</p>
-
-          <div class="setup-card__actions">
-            <button class="btn btn--ghost" @click="step--">Back</button>
-            <button class="btn btn--primary" @click="nextMesh">Continue →</button>
-          </div>
-        </template>
-
         <!-- ── Step 4: Recovery keys ──────────────────────────────── -->
-        <template v-else-if="step === 4">
+        <template v-else-if="currentStepId === 'recovery'">
           <h2 class="setup-card__heading">Emergency recovery keys</h2>
           <p class="setup-card__desc">
             Scutum uses Shamir's Secret Sharing to split your encryption master key into recovery shares.
@@ -349,7 +365,7 @@
         </template>
 
         <!-- ── Step 5: Done ───────────────────────────────────────── -->
-        <template v-else-if="step === 5">
+        <template v-else-if="currentStepId === 'done'">
           <div class="done-icon">
             <Icon name="lucide:check-circle" size="32" />
           </div>
@@ -409,7 +425,10 @@
             </div>
             <div v-if="result.wireguard?.public_key" class="summary-row">
               <span class="summary-label">WireGuard public key</span>
-              <span class="summary-val summary-val--key font-mono">{{ result.wireguard.public_key }}</span>
+              <span class="summary-val summary-val--key font-mono" style="flex:1">{{ result.wireguard.public_key }}</span>
+              <button class="share-card__copy" :class="{ copied: copiedPubkey }" @click="copyPubkey(result.wireguard.public_key)" title="Copy public key">
+                <Icon :name="copiedPubkey ? 'lucide:check' : 'lucide:copy'" size="12" />
+              </button>
             </div>
             <div v-if="result.wireguard?.address" class="summary-row">
               <span class="summary-label">Mesh IP</span>
@@ -421,7 +440,16 @@
             </div>
           </div>
 
-          <div class="setup-card__actions">
+          <!-- Remote: no local account — point operator to the hub -->
+          <div v-if="result?.install_type === 'remote'" class="info-note">
+            <Icon name="lucide:info" size="13" />
+            <span>
+              This node is running as a <strong>remote peer</strong>. There is no local account to sign in to.
+              Visit your <strong>hub's UI</strong> and enroll this node using the WireGuard public key above to complete the mesh connection.
+            </span>
+          </div>
+
+          <div v-else class="setup-card__actions">
             <NuxtLink
               to="/auth/login"
               class="btn btn--primary"
@@ -453,14 +481,20 @@ const wgAddressCookie = useCookie('wg_address', { maxAge: 60 * 60 * 24 * 365 })
 
 const step = ref(0)
 
-const steps = [
+const hubFlow = [
   { id: 'welcome',  label: 'Welcome' },
+  { id: 'mesh',     label: 'Mesh' },
   { id: 'account',  label: 'Admin account' },
   { id: 'kms',      label: 'Key management' },
-  { id: 'mesh',     label: 'Mesh' },
   { id: 'recovery', label: 'Recovery keys' },
   { id: 'done',     label: 'Done' },
 ]
+const remoteFlow = [
+  { id: 'welcome', label: 'Welcome' },
+  { id: 'mesh',    label: 'Mesh' },
+  { id: 'done',    label: 'Done' },
+]
+
 
 // ── Admin ──────────────────────────────────────────────────────────────────
 const admin      = reactive({ username: '', password: '', confirm: '' })
@@ -565,16 +599,46 @@ function buildKmsPayload(): KmsConfig {
 }
 
 // ── Mesh ───────────────────────────────────────────────────────────────────
+function randomMeshAddress(): string {
+  const b = Math.floor(Math.random() * 101) + 100 // 100–200
+  const c = Math.floor(Math.random() * 254) + 1   // 1–254
+  return `10.${b}.${c}.1/24`
+}
+
+function networkFromCIDR(cidr: string): string {
+  const m = cidr.match(/^(\d+\.\d+\.\d+)\.\d+\/(\d+)$/)
+  return m ? `${m[1]}.0/${m[2]}` : ''
+}
+
 const mesh = reactive({
   installType:   'hub' as 'hub' | 'remote' | 'combined',
-  address:       '10.99.0.1/24',
+  address:       randomMeshAddress(),
   listenPort:    51820,
   mtu:           0,
   hubEndpoint:   '',
   hubPublicKey:  '',
-  hubAllowedIPs: '10.99.0.0/24',
+  hubAllowedIPs: '',
+  hubHMACKey:    '',
+})
+
+// When role changes, reset address and re-derive allowedIPs
+watch(() => mesh.installType, (type) => {
+  if (type === 'hub' || type === 'combined') {
+    if (!mesh.address || mesh.address === '') mesh.address = randomMeshAddress()
+  } else {
+    mesh.address = '' // remote must pick their own IP on the hub's subnet
+  }
+})
+
+// Auto-derive hubAllowedIPs from mesh address (network portion of the /24)
+watch(() => mesh.address, (addr) => {
+  const net = networkFromCIDR(addr)
+  if (net) mesh.hubAllowedIPs = net
 })
 const meshError = ref('')
+
+const steps        = computed(() => mesh.installType === 'remote' ? remoteFlow : hubFlow)
+const currentStepId = computed(() => steps.value[step.value]?.id ?? 'welcome')
 
 function nextMesh() {
   meshError.value = ''
@@ -587,6 +651,8 @@ function nextMesh() {
     if (!mesh.hubEndpoint)   { meshError.value = 'Hub endpoint is required.'; return }
     if (!mesh.hubPublicKey)  { meshError.value = 'Hub public key is required.'; return }
     if (!mesh.hubAllowedIPs) { meshError.value = 'Hub allowed IPs are required.'; return }
+    submitRemote()
+    return
   }
   // combined: hub fields are optional — no validation required
   step.value++
@@ -620,6 +686,7 @@ function buildPayload(): SetupRequest {
       hub_endpoint:    mesh.installType !== 'hub' && mesh.hubEndpoint   ? mesh.hubEndpoint   : undefined,
       hub_public_key:  mesh.installType !== 'hub' && mesh.hubPublicKey  ? mesh.hubPublicKey  : undefined,
       hub_allowed_ips: mesh.installType !== 'hub' && mesh.hubAllowedIPs ? mesh.hubAllowedIPs : undefined,
+      hub_hmac_key:    mesh.installType !== 'hub' && mesh.hubHMACKey    ? mesh.hubHMACKey    : undefined,
     },
     admin:    { username: admin.username, password: admin.password },
     recovery: kms.provider === 'local' ? { n_shares: recovery.n, threshold: recovery.t } : undefined,
@@ -633,6 +700,32 @@ async function pollUntilAlive() {
       await api.setupStatus()
       return
     } catch {}
+  }
+}
+
+async function submitRemote() {
+  meshError.value = ''
+  submitting.value = true
+  try {
+    const res = await api.doSetup({
+      install_type: 'remote',
+      kms:          { provider: 'local' },
+      wireguard: {
+        address:         mesh.address,
+        mtu:             mesh.mtu > 0 ? mesh.mtu : undefined,
+        hub_endpoint:    mesh.hubEndpoint   || undefined,
+        hub_public_key:  mesh.hubPublicKey  || undefined,
+        hub_allowed_ips: mesh.hubAllowedIPs || undefined,
+        hub_hmac_key:    mesh.hubHMACKey    || undefined,
+      },
+      admin: { username: '', password: '' },
+    })
+    handleSuccess(res)
+  } catch (e: any) {
+    const raw = e?.data ?? e?.message ?? ''
+    meshError.value = typeof raw === 'string' && raw.trim() ? raw.trim() : 'Setup failed. Please try again.'
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -674,6 +767,9 @@ function handleSuccess(res: Awaited<ReturnType<typeof api.doSetup>>) {
     wgPubkeyCookie.value  = res.wireguard.public_key
     wgAddressCookie.value = res.wireguard.address ?? ''
   }
+  // Tell the global auth middleware setup is now done so /auth/login navigation works.
+  const setupDone = useState<boolean | null>('setup-complete')
+  setupDone.value = true
   step.value++
 }
 
@@ -682,6 +778,15 @@ async function copyShare(share: string, index: number) {
     await navigator.clipboard.writeText(share)
     copiedIndex.value = index
     setTimeout(() => { copiedIndex.value = null }, 1800)
+  } catch {}
+}
+
+const copiedPubkey = ref(false)
+async function copyPubkey(key: string) {
+  try {
+    await navigator.clipboard.writeText(key)
+    copiedPubkey.value = true
+    setTimeout(() => { copiedPubkey.value = false }, 1800)
   } catch {}
 }
 
@@ -746,6 +851,8 @@ function goToLogin() {
 .form-row   { display: flex; flex-direction: column; gap: 0.35rem; }
 .form-label { font-size: 0.78rem; color: var(--text-tertiary); }
 .form-label-hint { color: var(--text-subtle); font-weight: 400; }
+.form-hint { margin: 0.25rem 0 0; font-size: 0.72rem; color: var(--text-dim); line-height: 1.5; }
+.form-hint code { font-family: monospace; color: var(--accent-light); }
 .form-input, .form-select {
   background: var(--bg-elevated); border: 1px solid var(--border-strong);
   border-radius: 0.375rem; padding: 0.55rem 0.8rem;

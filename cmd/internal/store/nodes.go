@@ -38,3 +38,15 @@ func (s *Store) DeleteNode(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (s *Store) GetNodeByPublicKey(ctx context.Context, publicKey string) (NodeRecord, error) {
+	q := fmt.Sprintf(
+		`SELECT id, name, type, address, public_key FROM nodes WHERE public_key = %s`, s.ph(1),
+	)
+	var n NodeRecord
+	err := s.db.QueryRowContext(ctx, q, publicKey).Scan(&n.ID, &n.Name, &n.Type, &n.Address, &n.PublicKey)
+	if err != nil {
+		return NodeRecord{}, fmt.Errorf("node not found for public key")
+	}
+	return n, nil
+}

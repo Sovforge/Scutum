@@ -19,7 +19,6 @@ defineProps<{ title?: string }>()
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
-  overflow: hidden;
 }
 .card__header {
   display: flex;

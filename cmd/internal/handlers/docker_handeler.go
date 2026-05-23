@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -48,24 +49,24 @@ func (h *DockerHandler) PostDeploy(w http.ResponseWriter, r *http.Request) {
 
 	dockerConfig := models.ContainerCreateConfig{
 		Image: req.Repo,
+		Cmd:   req.Cmd,
 		Env:   req.Env,
-		ExposedPorts: map[string]struct{}{
-			fmt.Sprintf("%d/tcp", req.Port): {},
-		},
 		HostConfig: models.HostConfig{
 			Memory:   req.MemoryLimit,
 			NanoCpus: int64(req.CPULimit * 1e9),
-			PortBindings: map[string][]models.PortBinding{
-				fmt.Sprintf("%d/tcp", req.Port): {
-					{HostPort: fmt.Sprintf("%d", req.HostPort)},
-				},
-			},
-			Binds: req.Volumes,
+			Binds:    req.Volumes,
 			RestartPolicy: models.RestartPolicy{
 				Name: req.Restart,
 			},
 			NetworkMode: "bridge",
 		},
+	}
+	if req.Port > 0 {
+		portKey := fmt.Sprintf("%d/tcp", req.Port)
+		dockerConfig.ExposedPorts = map[string]struct{}{portKey: {}}
+		dockerConfig.HostConfig.PortBindings = map[string][]models.PortBinding{
+			portKey: {{HostPort: fmt.Sprintf("%d", req.HostPort)}},
+		}
 	}
 
 	var createResp struct {
@@ -75,8 +76,20 @@ func (h *DockerHandler) PostDeploy(w http.ResponseWriter, r *http.Request) {
 
 	createPath := fmt.Sprintf("/containers/create?name=%s", req.Name)
 	if err := h.client.Do("POST", createPath, dockerConfig, &createResp); err != nil {
-		http.Error(w, "Create failed: "+err.Error(), http.StatusInternalServerError)
-		return
+		// Docker returns 404 when the image isn't cached locally. Pull then retry once.
+		if strings.Contains(err.Error(), "404") {
+			if stream, pullErr := h.client.DoStream("POST", "/images/create?fromImage="+req.Repo, nil); pullErr == nil {
+				io.Copy(io.Discard, stream) //nolint
+				stream.Close()
+			}
+			if err = h.client.Do("POST", createPath, dockerConfig, &createResp); err != nil {
+				http.Error(w, "Create failed: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			http.Error(w, "Create failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	startPath := fmt.Sprintf("/containers/%s/start", createResp.ID)
@@ -355,6 +368,10 @@ func (h *DockerHandler) HandleTerminal(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
 
+	if proxyWSToNode(w, r, h.nodeStore, "/api/docker/containers/"+id+"/terminal") {
+		return
+	}
+
 	audit("TERMINAL_SESSION_STARTED", r, "container_id", id)
 
 	// 1. Upgrade to WebSocket first so errors can be delivered over the channel.
@@ -559,4 +576,131 @@ func (h *DockerHandler) HandleDeployCompose(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"output": string(out)})
+}
+
+// HandleContainerTraces scrapes the last N log lines of a container, extracts
+// OTEL-compatible spans from structured JSON lines, and returns them.
+// GET /docker/containers/{id}/traces?tail=200
+func (h *DockerHandler) HandleContainerTraces(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	id := r.PathValue("id")
+	tail := r.URL.Query().Get("tail")
+	if tail == "" {
+		tail = "200"
+	}
+
+	// Resolve a friendly service name from the container name.
+	serviceName := id[:min(12, len(id))]
+	var inspect struct {
+		Name string `json:"Name"`
+	}
+	if err := h.client.Do("GET", fmt.Sprintf("/containers/%s/json", id), nil, &inspect); err == nil {
+		serviceName = strings.TrimPrefix(inspect.Name, "/")
+	}
+
+	path := fmt.Sprintf("/containers/%s/logs?stdout=true&stderr=true&tail=%s", id, tail)
+	stream, err := h.client.DoStream("GET", path, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer stream.Close()
+
+	var spans []utils.TraceEntry
+	hdr := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(stream, hdr); err != nil {
+			break
+		}
+		size := int(uint32(hdr[4])<<24 | uint32(hdr[5])<<16 | uint32(hdr[6])<<8 | uint32(hdr[7]))
+		buf := make([]byte, size)
+		if _, err := io.ReadFull(stream, buf); err != nil {
+			break
+		}
+		line := strings.TrimRight(string(buf), "\n")
+		// Strip Docker timestamps if present (RFC3339 prefix before first space)
+		if len(line) > 30 && line[4] == '-' {
+			if idx := strings.Index(line, " "); idx > 0 {
+				line = line[idx+1:]
+			}
+		}
+		if s := utils.ParseSpanFromLogLine(line, serviceName, "docker"); s != nil {
+			spans = append(spans, *s)
+		}
+	}
+	if spans == nil {
+		spans = []utils.TraceEntry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(spans)
+}
+
+// HandleContainerMetricsScrape scrapes a Prometheus /metrics endpoint exposed
+// by a container and returns the parsed data points.
+// GET /docker/containers/{id}/metrics-scrape?port=9090&path=/metrics
+func (h *DockerHandler) HandleContainerMetricsScrape(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	id := r.PathValue("id")
+	port := r.URL.Query().Get("port")
+	if port == "" {
+		port = "9090"
+	}
+	metricsPath := r.URL.Query().Get("path")
+	if metricsPath == "" {
+		metricsPath = "/metrics"
+	}
+
+	// Get container IP from Docker inspect.
+	var inspect struct {
+		Name            string `json:"Name"`
+		NetworkSettings struct {
+			IPAddress string `json:"IPAddress"`
+		} `json:"NetworkSettings"`
+	}
+	if err := h.client.Do("GET", fmt.Sprintf("/containers/%s/json", id), nil, &inspect); err != nil {
+		http.Error(w, "failed to inspect container: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ip := inspect.NetworkSettings.IPAddress
+	if ip == "" {
+		http.Error(w, "container has no IP address (not running?)", http.StatusBadRequest)
+		return
+	}
+	serviceName := strings.TrimPrefix(inspect.Name, "/")
+
+	target := fmt.Sprintf("http://%s:%s%s", ip, port, metricsPath)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "scrape failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	var points []utils.MetricPoint
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		if p := utils.ParsePrometheusLine(sc.Text(), serviceName, "docker"); p != nil {
+			utils.AppendMetric(*p)
+			points = append(points, *p)
+		}
+	}
+	if points == nil {
+		points = []utils.MetricPoint{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(points)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

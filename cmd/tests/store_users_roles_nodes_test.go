@@ -554,7 +554,7 @@ func TestStoreListNodes(t *testing.T) {
 
 	nodes := []store.NodeRecord{
 		{ID: "n1", Name: "core-01", Type: "hub", Address: "10.0.0.1:51820", PublicKey: "abc="},
-		{ID: "n2", Name: "edge-01", Type: "edge", Address: "10.0.0.2:51820", PublicKey: "def="},
+		{ID: "n2", Name: "edge-01", Type: "combined", Address: "10.0.0.2:51820", PublicKey: "def="},
 	}
 	for _, n := range nodes {
 		if err := s.CreateNode(ctx, n); err != nil {

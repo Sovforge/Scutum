@@ -109,6 +109,13 @@ func (s *Store) SwapKMS(provider kms.Provider) {
 	s.kms = provider
 }
 
+// CurrentKMS returns the active KMS provider.
+func (s *Store) CurrentKMS() kms.Provider {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.kms
+}
+
 // ph is a convenience shorthand for s.driver.Placeholder(n).
 func (s *Store) ph(n int) string { return s.driver.Placeholder(n) }
 
@@ -325,6 +332,43 @@ type WGPeerRecord struct {
 	NodeID     string
 	Endpoint   string
 	AllowedIPs string
+}
+
+func (s *Store) UpsertWGPeer(ctx context.Context, p WGPeerRecord) error {
+	switch s.driver.(type) {
+	case *MySQLDriver:
+		_, err := s.db.ExecContext(ctx,
+			fmt.Sprintf(`INSERT INTO wg_peers (node_id, endpoint, allowed_ips)
+				VALUES (%s, %s, %s)
+				ON DUPLICATE KEY UPDATE endpoint=VALUES(endpoint), allowed_ips=VALUES(allowed_ips)`,
+				s.ph(1), s.ph(2), s.ph(3)),
+			p.NodeID, p.Endpoint, p.AllowedIPs)
+		return err
+	default: // SQLite and PostgreSQL
+		_, err := s.db.ExecContext(ctx,
+			fmt.Sprintf(`INSERT INTO wg_peers (node_id, endpoint, allowed_ips)
+				VALUES (%s, %s, %s)
+				ON CONFLICT (node_id) DO UPDATE SET endpoint=EXCLUDED.endpoint, allowed_ips=EXCLUDED.allowed_ips`,
+				s.ph(1), s.ph(2), s.ph(3)),
+			p.NodeID, p.Endpoint, p.AllowedIPs)
+		return err
+	}
+}
+
+func (s *Store) GetWGPeer(ctx context.Context, nodeID string) (WGPeerRecord, error) {
+	q := fmt.Sprintf(`SELECT node_id, endpoint, allowed_ips FROM wg_peers WHERE node_id = %s`, s.ph(1))
+	var p WGPeerRecord
+	err := s.db.QueryRowContext(ctx, q, nodeID).Scan(&p.NodeID, &p.Endpoint, &p.AllowedIPs)
+	if err != nil {
+		return WGPeerRecord{}, fmt.Errorf("peer not found")
+	}
+	return p, nil
+}
+
+func (s *Store) UpdateWGPeerEndpoint(ctx context.Context, nodeID, endpoint string) error {
+	q := fmt.Sprintf(`UPDATE wg_peers SET endpoint = %s WHERE node_id = %s`, s.ph(1), s.ph(2))
+	_, err := s.db.ExecContext(ctx, q, endpoint, nodeID)
+	return err
 }
 
 func (s *Store) ListWGPeers(ctx context.Context) ([]WGPeerRecord, error) {

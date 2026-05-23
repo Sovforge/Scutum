@@ -412,6 +412,14 @@ func (h *KubernetesHandler) HandleTerminal(w http.ResponseWriter, r *http.Reques
 	pod := r.PathValue("pod")
 	container := r.URL.Query().Get("container")
 
+	remotePath := "/api/k8s/" + namespace + "/" + pod + "/terminal"
+	if container != "" {
+		remotePath += "?container=" + url.QueryEscape(container)
+	}
+	if proxyWSToNode(w, r, h.nodeStore, remotePath) {
+		return
+	}
+
 	browserConn, err := utils.UpgradeToWebSocket(w, r)
 	if err != nil {
 		return
@@ -471,4 +479,98 @@ func (h *KubernetesHandler) HandleTerminal(w http.ResponseWriter, r *http.Reques
 
 	// Wait until one of the streams is closed
 	<-done
+}
+
+// HandlePodTraces scrapes the last N log lines of a pod, extracts OTEL-compatible
+// spans from structured JSON lines, and returns them.
+// GET /kubernetes/{ns}/pods/{name}/traces?tail=200&container=...
+func (h *KubernetesHandler) HandlePodTraces(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	ns := r.PathValue("ns")
+	name := r.PathValue("name")
+	container := r.URL.Query().Get("container")
+	tail := r.URL.Query().Get("tail")
+	if tail == "" {
+		tail = "200"
+	}
+
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/log?tail=%s&timestamps=true", ns, name, tail)
+	if container != "" {
+		path += "&container=" + url.QueryEscape(container)
+	}
+	stream, err := h.client.DoStream("GET", path, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer stream.Close()
+
+	serviceName := name
+	if container != "" {
+		serviceName = container
+	}
+
+	var spans []utils.TraceEntry
+	sc := bufio.NewScanner(stream)
+	for sc.Scan() {
+		line := sc.Text()
+		// Strip K8s timestamps (RFC3339 prefix before first space)
+		if len(line) > 30 && line[4] == '-' {
+			if idx := strings.Index(line, " "); idx > 0 {
+				line = line[idx+1:]
+			}
+		}
+		if s := utils.ParseSpanFromLogLine(line, serviceName, "k8s"); s != nil {
+			spans = append(spans, *s)
+		}
+	}
+	if spans == nil {
+		spans = []utils.TraceEntry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(spans)
+}
+
+// HandlePodMetricsScrape scrapes a Prometheus /metrics endpoint from a pod via
+// the Kubernetes API server proxy.
+// GET /kubernetes/{ns}/pods/{name}/metrics-scrape?port=9090&path=/metrics
+func (h *KubernetesHandler) HandlePodMetricsScrape(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	ns := r.PathValue("ns")
+	name := r.PathValue("name")
+	port := r.URL.Query().Get("port")
+	if port == "" {
+		port = "9090"
+	}
+	metricsPath := r.URL.Query().Get("path")
+	if metricsPath == "" {
+		metricsPath = "/metrics"
+	}
+
+	// Use K8s API server proxy to reach the pod.
+	k8sPath := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:%s/proxy%s", ns, name, port, metricsPath)
+	stream, err := h.client.DoStream("GET", k8sPath, nil)
+	if err != nil {
+		http.Error(w, "scrape failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer stream.Close()
+
+	var points []utils.MetricPoint
+	sc := bufio.NewScanner(stream)
+	for sc.Scan() {
+		if p := utils.ParsePrometheusLine(sc.Text(), name, "k8s"); p != nil {
+			utils.AppendMetric(*p)
+			points = append(points, *p)
+		}
+	}
+	if points == nil {
+		points = []utils.MetricPoint{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(points)
 }

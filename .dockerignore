@@ -18,7 +18,12 @@ Thumbs.db
 # Runtime dirs (built inside container)
 data/
 secrets/
+scutum/
 coverage.out
+
+# Build artifacts
+scutum.tar.gz
+docker-run.txt
 
 # Compiled binaries (built inside Docker)
 api

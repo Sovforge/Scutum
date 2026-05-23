@@ -8,14 +8,16 @@ import (
 )
 
 type mockObsSink struct {
-	logs   []utils.LogEntry
-	audit  []utils.AuditEntry
-	traces []utils.TraceEntry
+	logs    []utils.LogEntry
+	audit   []utils.AuditEntry
+	traces  []utils.TraceEntry
+	metrics []utils.MetricPoint
 }
 
-func (m *mockObsSink) PersistLog(e utils.LogEntry)   { m.logs = append(m.logs, e) }
-func (m *mockObsSink) PersistAudit(e utils.AuditEntry) { m.audit = append(m.audit, e) }
-func (m *mockObsSink) PersistTrace(e utils.TraceEntry) { m.traces = append(m.traces, e) }
+func (m *mockObsSink) PersistLog(e utils.LogEntry)      { m.logs = append(m.logs, e) }
+func (m *mockObsSink) PersistAudit(e utils.AuditEntry)  { m.audit = append(m.audit, e) }
+func (m *mockObsSink) PersistTrace(e utils.TraceEntry)  { m.traces = append(m.traces, e) }
+func (m *mockObsSink) PersistMetric(e utils.MetricPoint) { m.metrics = append(m.metrics, e) }
 
 func TestLoggerUtils(t *testing.T) {
 	sink := &mockObsSink{}

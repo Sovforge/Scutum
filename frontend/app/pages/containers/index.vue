@@ -77,7 +77,6 @@
         <UiStatusDot :status="group.node.status" />
         <span class="node-header__name">{{ group.node.name }}</span>
         <UiBadge variant="info">{{ group.node.role }}</UiBadge>
-        <span class="node-header__meta">{{ group.node.meshIp }}</span>
         <span class="node-header__count">
           {{ group.containers.length }} container{{ group.containers.length !== 1 ? 's' : '' }}
         </span>
@@ -108,7 +107,7 @@
                 v-for="c in group.containers"
                 :key="c.Id"
                 class="data-table__row"
-                @click="navigateTo(`/containers/${c.Id}`)"
+                @click="openContainer(c.Id, group.node.nodeId)"
               >
                 <td><span class="container-name">{{ containerName(c) }}</span></td>
                 <td class="mono">{{ c.Image }}</td>
@@ -133,12 +132,24 @@
 </template>
 
 <script setup lang="ts">
+import type { NodeStatus } from '~/components/ui/StatusDot.vue'
+
 definePageMeta({ layout: 'default' })
 
-const api = useApi()
+const api        = useApi()
+const nodesStore = useNodesStore()
+
+function openContainer(id: string, nodeId?: string) {
+  nodesStore.select(nodeId ?? null)
+  navigateTo(`/containers/${id}`)
+}
 
 // ── Remote data ────────────────────────────────────────────────────────────
-const rawContainers = ref<DockerContainer[]>([])
+interface NodeGroup {
+  node: { id: string; name: string; role: string; status: NodeStatus; nodeId?: string }
+  containers: DockerContainer[]
+}
+const groups   = ref<NodeGroup[]>([])
 const loading  = ref(true)
 const apiError = ref('')
 
@@ -146,7 +157,27 @@ async function loadContainers() {
   loading.value = true
   apiError.value = ''
   try {
-    rawContainers.value = await api.listContainers()
+    const nodes = await api.listNodes().catch(() => [] as NodeRecord[])
+
+    const targets: Array<{ id: string; name: string; role: string; status: NodeStatus; nodeId?: string }> = [
+      { id: 'local', name: 'Local', role: 'hub', status: 'healthy' },
+      ...nodes
+        .filter(n => n.type !== 'hub')
+        .map(n => ({
+          id: n.id, name: n.name, role: n.type,
+          status: 'pending' as NodeStatus,
+          nodeId: n.id,
+        })),
+    ]
+
+    const results = await Promise.allSettled(
+      targets.map(t => api.listContainers(t.nodeId))
+    )
+
+    groups.value = targets.map((t, i) => {
+      const res = results[i]
+      return { node: t, containers: res?.status === 'fulfilled' ? res.value : [] }
+    })
   } catch (e: any) {
     apiError.value = e?.data?.error ?? 'Failed to load containers'
   } finally {
@@ -185,8 +216,8 @@ const filters = [
   { label: 'Paused',  value: 'paused'  },
 ] as const
 
-const filteredContainers = computed(() =>
-  rawContainers.value.filter(c => {
+function filterContainers(containers: DockerContainer[]): DockerContainer[] {
+  return containers.filter((c: DockerContainer) => {
     const state = c.State?.toLowerCase() ?? ''
     if (activeFilter.value !== 'all' && state !== activeFilter.value) return false
     if (search.value) {
@@ -195,21 +226,23 @@ const filteredContainers = computed(() =>
     }
     return true
   })
+}
+
+const filteredGroups = computed(() =>
+  groups.value
+    .map(g => ({ node: g.node, containers: filterContainers(g.containers) }))
+    .filter(g => g.containers.length > 0)
 )
 
-// Group into a single "local" group so the collapsible UI keeps its shape
-const filteredGroups = computed(() => {
-  if (!filteredContainers.value.length) return []
-  return [{ node: { id: 'local', name: 'local', role: 'hub', status: 'pending' as const, meshIp: '—' }, containers: filteredContainers.value }]
-})
+const allContainers = computed(() => groups.value.flatMap(g => g.containers))
 
 const stats = computed(() => {
-  const all = rawContainers.value
+  const all = allContainers.value
   return [
     { label: 'Total',   value: all.length },
-    { label: 'Running', value: all.filter(c => c.State === 'running').length },
-    { label: 'Exited',  value: all.filter(c => c.State === 'exited').length },
-    { label: 'Paused',  value: all.filter(c => c.State === 'paused').length },
+    { label: 'Running', value: all.filter((c: DockerContainer) => c.State === 'running').length },
+    { label: 'Exited',  value: all.filter((c: DockerContainer) => c.State === 'exited').length },
+    { label: 'Paused',  value: all.filter((c: DockerContainer) => c.State === 'paused').length },
   ]
 })
 
@@ -231,7 +264,7 @@ const fileInput    = ref<HTMLInputElement | null>(null)
 
 watch(deployModal, async (open) => {
   if (open && deployNodes.value.length === 0) {
-    try { deployNodes.value = await api.listNodes() } catch {}
+    try { deployNodes.value = (await api.listNodes()).filter(n => n.type !== 'hub') } catch {}
   }
 })
 

@@ -4,6 +4,7 @@ package models
 type DeployRequest struct {
 	Repo        string   `json:"repo"`         // e.g., "nginx:latest"
 	Name        string   `json:"name"`         // Unique container name
+	Cmd         []string `json:"cmd"`          // Optional command override
 	Port        int      `json:"port"`         // Internal port (e.g., 80)
 	HostPort    int      `json:"host_port"`    // External port (e.g., 8080)
 	Env         []string `json:"env"`          // e.g., ["DEBUG=true"]

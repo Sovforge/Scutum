@@ -143,7 +143,7 @@ func TestHasDuplicateKeys(t *testing.T) {
 
 func TestWireGuardHandlerErrorResponses(t *testing.T) {
 	healer := sync.NewHealer(sync.HealerConfig{}, &sync.DefaultWGChecker{})
-	h := handlers.NewWireGuardHandler("wg0", &mockFailWGService{}, healer)
+	h := handlers.NewWireGuardHandler("wg0", &mockFailWGService{}, healer, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/wireguard/add",
 		strings.NewReader(`{"public_key":"key","endpoint":"x:1","allowed_ips":"0.0.0.0/0"}`))

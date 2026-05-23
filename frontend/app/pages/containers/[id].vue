@@ -265,7 +265,7 @@ const c = computed(() => {
       const [portStr, proto] = key.split('/')
       return (bindings ?? []).map((b: any) => ({
         host:      parseInt(b.HostPort  || '0'),
-        container: parseInt(portStr),
+        container: parseInt(String(portStr ?? '0')),
         proto:     proto ?? 'tcp',
       }))
     })

@@ -97,63 +97,61 @@
       <div class="modal__body">
         <div class="enroll-note">
           <Icon name="lucide:info" size="13" class="enroll-note__icon" />
-          Scutum uses <strong>explicit manual enrollment</strong>. Nodes are never auto-discovered or auto-trusted. You must exchange WireGuard keys out-of-band.
+          Enter the remote or edge node's WireGuard details. That node must have already been configured to point to this hub — enrollment here adds it to the mesh and authorises the connection.
         </div>
 
-        <div class="enroll-steps">
-          <!-- Step 1: This node's identity -->
-          <div class="enroll-step">
-            <div class="step-num">1</div>
-            <div class="step-body">
-              <div class="step-title">Share this node's public key with the peer</div>
-              <div class="step-desc">Copy the WireGuard public key below and send it to the operator of the node you want to enroll.</div>
-              <div class="key-block">
-                <code class="key-val">{{ localPubkey }}</code>
-                <button class="copy-btn" @click="copyKey(localPubkey)" :class="{ 'copy-btn--done': copied === 'local' }">
-                  <Icon :name="copied === 'local' ? 'lucide:check' : 'lucide:copy'" size="12" />
-                </button>
-              </div>
-              <div class="step-sub">Endpoint: <code class="inline-mono">{{ localEndpoint }}</code></div>
-            </div>
+        <!-- Hub's own key — remote operators need this to configure their node -->
+        <div class="hub-key-block">
+          <span class="hub-key-label">This hub's public key</span>
+          <div class="key-block">
+            <code class="key-val">{{ localPubkey }}</code>
+            <button class="copy-btn" @click="copyKey(localPubkey)" :class="{ 'copy-btn--done': copied === 'local' }">
+              <Icon :name="copied === 'local' ? 'lucide:check' : 'lucide:copy'" size="12" />
+            </button>
           </div>
+          <span class="hub-key-hint">Give this key and endpoint <code class="inline-mono">{{ localEndpoint }}</code> to the remote node operator so they can point their node at this hub.</span>
+        </div>
 
-          <!-- Step 2: Peer's identity -->
-          <div class="enroll-step">
-            <div class="step-num">2</div>
-            <div class="step-body">
-              <div class="step-title">Enter the peer's WireGuard details</div>
-              <div class="form-grid">
-                <div class="form-row">
-                  <label class="form-label">Peer name</label>
-                  <input v-model="enrollForm.name" class="form-input" placeholder="worker-03" />
-                </div>
-                <div class="form-row">
-                  <label class="form-label">Public key</label>
-                  <input v-model="enrollForm.pubkey" class="form-input font-mono" placeholder="Base64-encoded WireGuard public key" />
-                </div>
-                <div class="form-row">
-                  <label class="form-label">Endpoint</label>
-                  <input v-model="enrollForm.endpoint" class="form-input font-mono" placeholder="1.2.3.4:51820" />
-                </div>
-                <div class="form-row">
-                  <label class="form-label">Role</label>
-                  <select v-model="enrollForm.role" class="form-select">
-                    <option value="edge">Edge</option>
-                    <option value="hub">Hub</option>
-                    <option value="hub+edge">Hub + Edge</option>
-                  </select>
-                </div>
-              </div>
-            </div>
+        <!-- Hub HMAC key — remote node needs this to accept proxied requests -->
+        <div class="hub-key-block">
+          <span class="hub-key-label">Hub proxy key <span style="font-weight:400;text-transform:none;letter-spacing:0">(enter this in the remote node's setup)</span></span>
+          <div class="key-block">
+            <code class="key-val">{{ hubHMACKey || 'loading…' }}</code>
+            <button class="copy-btn" @click="copyKey(hubHMACKey, 'hmac')" :class="{ 'copy-btn--done': copied === 'hmac' }" :disabled="!hubHMACKey">
+              <Icon :name="copied === 'hmac' ? 'lucide:check' : 'lucide:copy'" size="12" />
+            </button>
           </div>
+          <span class="hub-key-hint">The remote node needs this key so it can accept API requests proxied from this hub.</span>
+        </div>
 
-          <!-- Step 3: Confirm -->
-          <div class="enroll-step">
-            <div class="step-num">3</div>
-            <div class="step-body">
-              <div class="step-title">Verify and approve</div>
-              <div class="step-desc">The peer must also enroll this node using the key above. Both sides must be configured before the handshake succeeds.</div>
-            </div>
+        <div class="form-grid" style="margin-top:0.25rem">
+          <div class="form-row">
+            <label class="form-label">Node name</label>
+            <input v-model="enrollForm.name" class="form-input" placeholder="worker-03" />
+          </div>
+          <div class="form-row">
+            <label class="form-label">Remote node's public key</label>
+            <input v-model="enrollForm.pubkey" class="form-input font-mono" placeholder="Base64-encoded WireGuard public key" />
+          </div>
+          <div class="form-row">
+            <label class="form-label">Remote node's endpoint <span class="form-label-hint">(host:port, if reachable)</span></label>
+            <input v-model="enrollForm.endpoint" class="form-input font-mono" placeholder="1.2.3.4:51820" />
+          </div>
+          <div class="form-row">
+            <label class="form-label">Allowed IPs</label>
+            <input v-model="enrollForm.allowedIPs" class="form-input font-mono" placeholder="10.102.132.2/32" />
+          </div>
+          <div class="form-row">
+            <label class="form-label">API address <span class="form-label-hint">(host:port)</span></label>
+            <input v-model="enrollForm.apiAddress" class="form-input font-mono" placeholder="10.102.132.2:8086" />
+          </div>
+          <div class="form-row">
+            <label class="form-label">Role</label>
+            <select v-model="enrollForm.role" class="form-select">
+              <option value="remote">Remote</option>
+              <option value="hub">Hub</option>
+              <option value="combined">Combined</option>
+            </select>
           </div>
         </div>
       </div>
@@ -161,7 +159,7 @@
       <div class="modal__footer">
         <p v-if="enrollError" class="enroll-error">{{ enrollError }}</p>
         <button class="cancel-btn" @click="showEnroll = false">Cancel</button>
-        <button class="save-btn" @click="enroll" :disabled="enrollSaving || !enrollForm.pubkey || !enrollForm.endpoint || !enrollForm.name">
+        <button class="save-btn" @click="enroll" :disabled="enrollSaving || !enrollForm.pubkey || !enrollForm.endpoint || !enrollForm.name || !enrollForm.allowedIPs || !enrollForm.apiAddress">
           <Icon name="lucide:user-check" size="14" /> {{ enrollSaving ? 'Enrolling…' : 'Enroll Peer' }}
         </button>
       </div>
@@ -197,36 +195,64 @@ async function loadNodes() {
 onMounted(loadNodes)
 
 // ── Enroll form ────────────────────────────────────────────────────────────
-const showEnroll = ref(false)
-const copied     = ref<string | null>(null)
+const showEnroll  = ref(false)
+const copied      = ref<string | null>(null)
+const hubHMACKey  = ref('')
 
 const wgPubkeyCookie  = useCookie<string>('wg_pubkey')
 const wgAddressCookie = useCookie<string>('wg_address')
 const localPubkey   = computed(() => wgPubkeyCookie.value  || '(complete setup to get public key)')
 const localEndpoint = computed(() => wgAddressCookie.value || '—')
 
-const enrollForm = reactive({ name: '', pubkey: '', endpoint: '', role: 'edge' })
+watch(showEnroll, async (open) => {
+  if (open && !hubHMACKey.value) {
+    try {
+      const res = await api.getHubKey()
+      hubHMACKey.value = res.hmac_key
+    } catch {}
+  }
+})
 
-async function copyKey(key: string) {
-  await navigator.clipboard.writeText(key).catch(() => {})
-  copied.value = 'local'
-  setTimeout(() => { copied.value = null }, 2000)
+const enrollForm = reactive({ name: '', pubkey: '', endpoint: '', allowedIPs: '', apiAddress: '', role: 'remote' })
+
+async function copyKey(key: string, slot = 'local') {
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(key)
+    } else {
+      const el = document.createElement('textarea')
+      el.value = key
+      el.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+    }
+    copied.value = slot
+    setTimeout(() => { copied.value = null }, 2000)
+  } catch {}
 }
 
 async function enroll() {
-  if (!enrollForm.pubkey || !enrollForm.endpoint || !enrollForm.name) return
+  if (!enrollForm.pubkey || !enrollForm.endpoint || !enrollForm.name || !enrollForm.allowedIPs || !enrollForm.apiAddress) return
   enrollError.value = ''
   enrollSaving.value = true
   try {
-    await api.createNode({
+    const node = await api.createNode({
       name:       enrollForm.name,
       type:       enrollForm.role,
-      address:    enrollForm.endpoint,
+      address:    enrollForm.apiAddress,
       public_key: enrollForm.pubkey,
+    })
+    await api.addPeer({
+      public_key:  enrollForm.pubkey,
+      endpoint:    enrollForm.endpoint,
+      allowed_ips: enrollForm.allowedIPs,
+      node_id:     node.id,
     })
     await loadNodes()
     showEnroll.value = false
-    Object.assign(enrollForm, { name: '', pubkey: '', endpoint: '', role: 'edge' })
+    Object.assign(enrollForm, { name: '', pubkey: '', endpoint: '', allowedIPs: '', apiAddress: '', role: 'remote' })
   } catch (e: any) {
     enrollError.value = e?.data?.error ?? 'Enrollment failed'
   } finally {
@@ -249,13 +275,13 @@ async function confirmDelete(id: string) {
 
 // ── Filter / search ────────────────────────────────────────────────────────
 const search       = ref('')
-const activeFilter = ref<'all' | 'hub' | 'edge' | 'hub+edge'>('all')
+const activeFilter = ref<'all' | 'hub' | 'remote' | 'combined'>('all')
 
 const filters = [
-  { label: 'All',       value: 'all'      },
-  { label: 'Hub',       value: 'hub'      },
-  { label: 'Edge',      value: 'edge'     },
-  { label: 'Hub+Edge',  value: 'hub+edge' },
+  { label: 'All',      value: 'all'      },
+  { label: 'Hub',      value: 'hub'      },
+  { label: 'Remote',   value: 'remote'   },
+  { label: 'Combined', value: 'combined' },
 ] as const
 
 const filtered = computed(() =>
@@ -270,8 +296,8 @@ const filtered = computed(() =>
 const stats = computed(() => [
   { label: 'Total',    value: nodes.value.length },
   { label: 'Hub',      value: nodes.value.filter(n => n.type === 'hub').length },
-  { label: 'Edge',     value: nodes.value.filter(n => n.type === 'edge').length },
-  { label: 'Hub+Edge', value: nodes.value.filter(n => n.type === 'hub+edge').length },
+  { label: 'Remote',   value: nodes.value.filter(n => n.type === 'remote').length },
+  { label: 'Combined', value: nodes.value.filter(n => n.type === 'combined').length },
 ])
 
 </script>
@@ -493,20 +519,14 @@ const stats = computed(() => [
 .enroll-note__icon { color: #60a5fa; flex-shrink: 0; margin-top: 0.1rem; }
 .enroll-note strong { color: #bfdbfe; }
 
-/* Steps */
-.enroll-steps { display: flex; flex-direction: column; gap: 1.25rem; }
-.enroll-step { display: flex; gap: 0.875rem; }
-.step-num {
-  width: 24px; height: 24px;
-  background: var(--accent-subtle); border: 1px solid var(--accent-soft);
-  border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-size: 0.72rem; font-weight: 700; color: var(--accent-light);
-  flex-shrink: 0; margin-top: 0.1rem;
+.hub-key-block {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  background: var(--bg-elevated); border: 1px solid var(--border-strong);
+  border-radius: 0.5rem; padding: 0.625rem 0.75rem;
 }
-.step-body { display: flex; flex-direction: column; gap: 0.5rem; flex: 1; }
-.step-title { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
-.step-desc  { font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
-.step-sub   { font-size: 0.75rem; color: var(--text-muted); }
+.hub-key-label { font-size: 0.68rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.hub-key-hint  { font-size: 0.72rem; color: var(--text-subtle); line-height: 1.5; }
+.hub-key-hint .inline-mono { font-family: monospace; font-size: 0.7rem; }
 
 /* Key block */
 .key-block {

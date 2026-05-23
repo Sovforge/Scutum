@@ -112,9 +112,9 @@ const EDGE_COLOR: Record<EdgeQuality, string> = {
   dead:     '#ef444488',
 }
 const ROLE_ACCENT: Record<string, string> = {
-  hub:        '#a78bfa',
-  edge:       '#fb923c',
-  'hub+edge': '#06b6d4',
+  hub:      '#a78bfa',
+  remote:   '#fb923c',
+  combined: '#06b6d4',
 }
 
 // ─── Draw ──────────────────────────────────────────────────────────────────

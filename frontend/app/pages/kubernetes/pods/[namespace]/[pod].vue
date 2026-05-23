@@ -171,8 +171,9 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-  if (containers.value.length) {
-    selectedContainer.value = containers.value[0].name
+  const first = containers.value[0]
+  if (first) {
+    selectedContainer.value = first.name
     loadLogs()
   }
 })

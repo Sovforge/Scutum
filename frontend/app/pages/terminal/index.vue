@@ -34,7 +34,7 @@
               'picker__item--running': c.status === 'running',
             }"
             :disabled="c.status !== 'running'"
-            @click="openTarget({ id: c.id, name: c.name, kind: 'container', node: group.node, image: c.image })"
+            @click="openTarget({ id: c.id, name: c.name, kind: 'container', node: group.node, nodeId: group.nodeId, image: c.image })"
           >
             <span class="picker__dot" :class="`dot--${c.status}`" />
             <span class="picker__name">{{ c.name }}</span>
@@ -58,7 +58,7 @@
               'picker__item--running': p.phase === 'Running',
             }"
             :disabled="p.phase !== 'Running'"
-            @click="openTarget({ id: p.name, name: p.name, kind: 'pod', node: group.cluster, image: p.image, namespace: p.namespace })"
+            @click="openTarget({ id: p.name, name: p.name, kind: 'pod', node: group.cluster, nodeId: group.nodeId, image: p.image, namespace: p.namespace })"
           >
             <span class="picker__dot" :class="p.phase === 'Running' ? 'dot--running' : 'dot--stopped'" />
             <span class="picker__name">{{ p.name }}</span>
@@ -179,24 +179,37 @@ const wsBase = computed(() => {
 
 // ── Container data ─────────────────────────────────────────────────────────
 interface ContainerItem { id: string; name: string; status: string; image: string }
-interface ContainerGroup { node: string; containers: ContainerItem[] }
+interface ContainerGroup { node: string; nodeId?: string; containers: ContainerItem[] }
 
 const containerGroups   = ref<ContainerGroup[]>([])
 const containersLoading = ref(false)
 
+function mapContainers(ctrs: DockerContainer[]): ContainerItem[] {
+  return ctrs.map(c => ({
+    id:     c.Id,
+    name:   c.Names?.[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12),
+    status: c.State ?? (c.Status?.toLowerCase().includes('up') ? 'running' : 'stopped'),
+    image:  c.Image,
+  }))
+}
+
 async function loadContainers() {
   containersLoading.value = true
   try {
-    const ctrs = await api.listContainers()
-    const items = ctrs.map(c => ({
-      id:     c.Id,
-      name:   c.Names?.[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12),
-      status: (c.State ?? (c.Status.toLowerCase().includes('up') ? 'running' : 'stopped')),
-      image:  c.Image,
-    }))
-    containerGroups.value = items.length > 0
-      ? [{ node: 'Local Docker', containers: items }]
-      : []
+    const nodes = await api.listNodes().catch(() => [] as NodeRecord[])
+    const groups: ContainerGroup[] = []
+
+    const localCtrs = await api.listContainers().catch(() => [])
+    const localItems = mapContainers(localCtrs)
+    if (localItems.length) groups.push({ node: 'Local', containers: localItems })
+
+    for (const n of nodes.filter(n => n.type !== 'hub')) {
+      const ctrs = await api.listContainers(n.id).catch(() => [])
+      const items = mapContainers(ctrs)
+      if (items.length) groups.push({ node: n.name, nodeId: n.id, containers: items })
+    }
+
+    containerGroups.value = groups
   } catch { containerGroups.value = [] } finally {
     containersLoading.value = false
   }
@@ -204,27 +217,40 @@ async function loadContainers() {
 
 // ── Pod data ───────────────────────────────────────────────────────────────
 interface PodItem { name: string; namespace: string; phase: string; image: string }
-interface PodGroup { cluster: string; pods: PodItem[] }
+interface PodGroup { cluster: string; nodeId?: string; pods: PodItem[] }
 
 const podGroups   = ref<PodGroup[]>([])
 const podsLoading = ref(false)
 
+function mapPods(raw: any, nodeId?: string): PodGroup[] {
+  const items: PodItem[] = (raw?.items ?? []).map((p: any) => ({
+    name:      p.metadata?.name ?? '',
+    namespace: p.metadata?.namespace ?? 'default',
+    phase:     p.status?.phase ?? 'Unknown',
+    image:     p.spec?.containers?.[0]?.image ?? '',
+  }))
+  const byNs: Record<string, PodItem[]> = {}
+  for (const p of items) {
+    ;(byNs[p.namespace] ??= []).push(p)
+  }
+  return Object.entries(byNs).map(([ns, pods]) => ({ cluster: ns, nodeId, pods }))
+}
+
 async function loadPods() {
   podsLoading.value = true
   try {
-    const raw: any = await api.listAllK8sPods()
-    const items: PodItem[] = (raw?.items ?? []).map((p: any) => ({
-      name:      p.metadata?.name ?? '',
-      namespace: p.metadata?.namespace ?? 'default',
-      phase:     p.status?.phase ?? 'Unknown',
-      image:     p.spec?.containers?.[0]?.image ?? '',
-    }))
-    // Group by namespace (closest proxy for "cluster" without cluster info)
-    const byNs: Record<string, PodItem[]> = {}
-    for (const p of items) {
-      ;(byNs[p.namespace] ??= []).push(p)
+    const nodes = await api.listNodes().catch(() => [] as NodeRecord[])
+    const groups: PodGroup[] = []
+
+    const localRaw = await api.listAllK8sPods().catch(() => null)
+    groups.push(...mapPods(localRaw))
+
+    for (const n of nodes.filter(n => n.type !== 'hub')) {
+      const remoteRaw = await api.listAllK8sPods(n.id).catch(() => null)
+      groups.push(...mapPods(remoteRaw, n.id))
     }
-    podGroups.value = Object.entries(byNs).map(([ns, pods]) => ({ cluster: ns, pods }))
+
+    podGroups.value = groups
   } catch { podGroups.value = [] } finally {
     podsLoading.value = false
   }
@@ -280,6 +306,7 @@ interface Target {
   name:       string
   kind:       'container' | 'pod'
   node:       string
+  nodeId?:    string
   image:      string
   namespace?: string
 }
@@ -327,10 +354,11 @@ function openTarget(target: Target) {
 function connectWS(sess: Session, target: Target) {
   const token = getToken() ?? ''
   let url: string
+  const nodeParam = target.nodeId ? `&nodeId=${encodeURIComponent(target.nodeId)}` : ''
   if (target.kind === 'container') {
-    url = `${wsBase.value}/api/docker/containers/${encodeURIComponent(target.id)}/terminal?token=${encodeURIComponent(token)}`
+    url = `${wsBase.value}/api/docker/containers/${encodeURIComponent(target.id)}/terminal?token=${encodeURIComponent(token)}${nodeParam}`
   } else {
-    url = `${wsBase.value}/api/k8s/${encodeURIComponent(target.namespace ?? 'default')}/${encodeURIComponent(target.id)}/terminal?token=${encodeURIComponent(token)}`
+    url = `${wsBase.value}/api/k8s/${encodeURIComponent(target.namespace ?? 'default')}/${encodeURIComponent(target.id)}/terminal?token=${encodeURIComponent(token)}${nodeParam}`
   }
 
   pushToSession(sess, 'info', `Connecting to <span class="c-purple">${target.name}</span>…`)
@@ -550,10 +578,6 @@ function onKey(e: KeyboardEvent) {
     inputLine.value = ''
     e.preventDefault()
   }
-}
-
-function escHtml(s: string) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 onMounted(() => {

@@ -67,9 +67,9 @@ func (h *NodeHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Type {
-	case "hub", "peer", "edge":
+	case "hub", "remote", "combined":
 	default:
-		http.Error(w, "type must be hub, peer, or edge", http.StatusBadRequest)
+		http.Error(w, "type must be hub, remote, or combined", http.StatusBadRequest)
 		return
 	}
 

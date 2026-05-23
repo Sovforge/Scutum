@@ -5,11 +5,9 @@
     <div class="cluster-header">
       <div class="cluster-header__left">
         <UiStatusDot :status="clusterStatus" />
-        <span class="cluster-header__title">Kubernetes Cluster</span>
+        <span class="cluster-header__title">Kubernetes</span>
+        <span class="cluster-header__subtitle">{{ reachableNodes }} / {{ nodeSummaries.length }} nodes reachable</span>
         <span v-if="loading" class="cluster-header__hint">Loading…</span>
-        <span v-else-if="!summary" class="cluster-header__hint cluster-header__hint--warn">
-          Not reachable
-        </span>
       </div>
 
       <div v-if="summary" class="cluster-header__stats">
@@ -20,7 +18,7 @@
         <div class="cstat__div" />
         <div class="cstat">
           <span class="cstat__val">{{ summary.nodes }}</span>
-          <span class="cstat__label">nodes</span>
+          <span class="cstat__label">k8s nodes</span>
         </div>
         <div class="cstat__div" />
         <div class="cstat">
@@ -100,10 +98,10 @@
           <span class="tab__count">{{ t.count }}</span>
         </button>
       </div>
-      <div v-if="summary" class="tabs-row__meta">
-        <span class="muted">{{ summary.namespaces }} namespaces</span>
+      <div class="tabs-row__meta">
+        <span class="muted">{{ rawPods.length }} pods</span>
         <span class="sep">·</span>
-        <span class="muted">{{ summary.nodes }} nodes</span>
+        <span class="muted">{{ nodeSummaries.length }} cluster{{ nodeSummaries.length !== 1 ? 's' : '' }}</span>
       </div>
     </div>
 
@@ -116,6 +114,12 @@
             <div class="toolbar__search">
               <Icon name="lucide:search" size="13" class="toolbar__search-icon" />
               <input v-model="search" class="toolbar__input" placeholder="Search…" />
+            </div>
+            <div class="ns-wrap">
+              <select v-model="meshNodeFilter" class="ns-select">
+                <option value="all">All clusters</option>
+                <option v-for="ns in nodeSummaries" :key="ns.nodeId ?? '__local__'" :value="ns.nodeId ?? '__local__'">{{ ns.nodeName }}</option>
+              </select>
             </div>
             <div class="ns-wrap">
               <select v-model="activeNs" class="ns-select">
@@ -147,9 +151,10 @@
         <table v-else class="data-table">
           <thead>
             <tr>
+              <th>Cluster</th>
               <th>Pod</th>
               <th>Namespace</th>
-              <th>Node</th>
+              <th>K8s Node</th>
               <th>Phase</th>
               <th>Ready</th>
               <th>Restarts</th>
@@ -162,8 +167,13 @@
               :key="pod.uid"
               class="data-table__row"
               style="cursor:pointer"
-              @click="navigateTo(`/kubernetes/pods/${pod.namespace}/${pod.name}`)"
+              @click="openPod(pod)"
             >
+              <td>
+                <span class="cluster-chip" :class="pod.meshNodeId ? 'cluster-chip--remote' : 'cluster-chip--local'">
+                  {{ pod.meshNodeName }}
+                </span>
+              </td>
               <td>
                 <div class="res-name">
                   <span class="res-dot" :class="`res-dot--${phaseColor(pod.phase)}`" />
@@ -183,7 +193,7 @@
               <td class="muted">{{ pod.age }}</td>
             </tr>
             <tr v-if="filteredPods.length === 0 && !loading">
-              <td colspan="7" class="data-table__empty">No pods match your filter.</td>
+              <td colspan="8" class="data-table__empty">No pods match your filter.</td>
             </tr>
           </tbody>
         </table>
@@ -247,13 +257,15 @@ import type { NodeStatus } from '~/components/ui/StatusDot.vue'
 
 definePageMeta({ layout: 'default' })
 
-const api = useApi()
+const api        = useApi()
+const nodesStore = useNodesStore()
 
-const loading   = ref(false)
-const activeTab = ref<'pods' | 'deployments' | 'services' | 'config'>('pods')
-const activeNs  = ref('all')
-const podFilter = ref<'all' | 'Running' | 'Pending' | 'Failed'>('all')
-const search    = ref('')
+const loading        = ref(false)
+const activeTab      = ref<'pods' | 'deployments' | 'services' | 'config'>('pods')
+const activeNs       = ref('all')
+const meshNodeFilter = ref('all')
+const podFilter      = ref<'all' | 'Running' | 'Pending' | 'Failed'>('all')
+const search         = ref('')
 
 const podFilters = [
   { label: 'All',     value: 'all'     },
@@ -262,31 +274,64 @@ const podFilters = [
   { label: 'Failed',  value: 'Failed'  },
 ] as const
 
-// ── API data ─────────────────────────────────────────────────────────────
+// ── Data types ────────────────────────────────────────────────────────────
 interface K8sSummary {
   pods: number; running: number; pending: number; failed: number; succeeded: number
   namespaces: number; nodes: number; deployments: number
   healthy_deploys: number; unhealthy_deploys: number
 }
-const summary = ref<K8sSummary | null>(null)
 
-const clusterStatus = computed((): NodeStatus =>
-  loading.value ? 'degraded' : summary.value ? 'healthy' : 'offline'
-)
+interface NodeSummary {
+  nodeId:   string | null   // null = local hub
+  nodeName: string
+  summary:  K8sSummary | null
+}
 
 interface PodRow {
-  uid:       string
-  name:      string
-  namespace: string
-  node:      string
-  phase:     string
-  ready:     string
-  restarts:  number
-  age:       string
+  uid:          string
+  name:         string
+  namespace:    string
+  node:         string   // k8s node name within the cluster
+  phase:        string
+  ready:        string
+  restarts:     number
+  age:          string
+  meshNodeId:   string | null  // null = local
+  meshNodeName: string
 }
-const rawPods    = ref<PodRow[]>([])
+
+// ── State ─────────────────────────────────────────────────────────────────
+const nodeSummaries = ref<NodeSummary[]>([])
+const rawPods       = ref<PodRow[]>([])
+
+const summary = computed<K8sSummary | null>(() => {
+  const valid = nodeSummaries.value.map(n => n.summary).filter(Boolean) as K8sSummary[]
+  if (valid.length === 0) return null
+  return {
+    pods:             valid.reduce((a, s) => a + s.pods,             0),
+    running:          valid.reduce((a, s) => a + s.running,          0),
+    pending:          valid.reduce((a, s) => a + s.pending,          0),
+    failed:           valid.reduce((a, s) => a + s.failed,           0),
+    succeeded:        valid.reduce((a, s) => a + s.succeeded,        0),
+    namespaces:       valid.reduce((a, s) => a + s.namespaces,       0),
+    nodes:            valid.reduce((a, s) => a + s.nodes,            0),
+    deployments:      valid.reduce((a, s) => a + s.deployments,      0),
+    healthy_deploys:  valid.reduce((a, s) => a + s.healthy_deploys,  0),
+    unhealthy_deploys:valid.reduce((a, s) => a + s.unhealthy_deploys,0),
+  }
+})
+
+const reachableNodes = computed(() => nodeSummaries.value.filter(n => n.summary !== null).length)
+
+const clusterStatus = computed((): NodeStatus => {
+  if (loading.value)           return 'degraded'
+  if (reachableNodes.value > 0) return 'healthy'
+  return 'offline'
+})
+
 const namespaces = computed(() => [...new Set(rawPods.value.map(p => p.namespace))].sort())
 
+// ── Helpers ───────────────────────────────────────────────────────────────
 function parseAge(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime()
   const mins = Math.floor(diff / 60000)
@@ -296,35 +341,50 @@ function parseAge(ts: string): string {
   return `${Math.floor(hrs / 24)}d`
 }
 
-async function loadData() {
-  loading.value = true
-  try {
-    const [summ, podsResp] = await Promise.all([
-      api.getK8sSummary().catch(() => null),
-      api.listAllK8sPods().catch(() => null),
-    ])
-    summary.value = summ
-    if (podsResp?.items) {
-      rawPods.value = (podsResp.items as any[]).map((item: any) => {
-        const statuses   = item.status?.containerStatuses ?? []
-        const specCtrs   = item.spec?.containers ?? []
-        const readyCount = statuses.filter((s: any) => s.ready).length
-        const total      = statuses.length || specCtrs.length || 1
-        const restarts   = statuses.reduce((acc: number, s: any) => acc + (s.restartCount ?? 0), 0)
-        return {
-          uid:       item.metadata.uid ?? item.metadata.name,
-          name:      item.metadata.name,
-          namespace: item.metadata.namespace,
-          node:      item.spec?.nodeName ?? '—',
-          phase:     item.status?.phase ?? 'Unknown',
-          ready:     `${readyCount}/${total}`,
-          restarts,
-          age:       parseAge(item.metadata.creationTimestamp),
-        }
-      })
-    } else {
-      rawPods.value = []
+function parsePods(items: any[], meshNodeId: string | null, meshNodeName: string): PodRow[] {
+  return items.map((item: any) => {
+    const statuses   = item.status?.containerStatuses ?? []
+    const specCtrs   = item.spec?.containers ?? []
+    const readyCount = statuses.filter((s: any) => s.ready).length
+    const total      = statuses.length || specCtrs.length || 1
+    const restarts   = statuses.reduce((acc: number, s: any) => acc + (s.restartCount ?? 0), 0)
+    return {
+      uid:          (meshNodeId ?? 'local') + '/' + (item.metadata?.uid ?? item.metadata?.name),
+      name:         item.metadata?.name ?? '',
+      namespace:    item.metadata?.namespace ?? 'default',
+      node:         item.spec?.nodeName ?? '—',
+      phase:        item.status?.phase ?? 'Unknown',
+      ready:        `${readyCount}/${total}`,
+      restarts,
+      age:          parseAge(item.metadata?.creationTimestamp ?? new Date().toISOString()),
+      meshNodeId,
+      meshNodeName,
     }
+  })
+}
+
+// ── Load data from all mesh nodes ──────────────────────────────────────────
+async function loadData() {
+  loading.value   = true
+  rawPods.value   = []
+  nodeSummaries.value = []
+  try {
+    const nodes = await api.listNodes().catch(() => [] as NodeRecord[])
+    const allNodes = [
+      { id: null as string | null, name: 'Local' },
+      ...nodes.filter(n => n.type !== 'hub').map(n => ({ id: n.id, name: n.name })),
+    ]
+
+    await Promise.all(allNodes.map(async n => {
+      const [summ, podsResp] = await Promise.all([
+        api.getK8sSummary(n.id).catch(() => null),
+        api.listAllK8sPods(n.id).catch(() => null),
+      ])
+      nodeSummaries.value.push({ nodeId: n.id, nodeName: n.name, summary: summ })
+      if (podsResp?.items) {
+        rawPods.value.push(...parsePods(podsResp.items, n.id, n.name))
+      }
+    }))
   } finally {
     loading.value = false
   }
@@ -335,11 +395,15 @@ onMounted(loadData)
 // ── Filtering ─────────────────────────────────────────────────────────────
 const filteredPods = computed(() =>
   rawPods.value.filter(p => {
+    if (meshNodeFilter.value !== 'all') {
+      const target = meshNodeFilter.value === '__local__' ? null : meshNodeFilter.value
+      if (p.meshNodeId !== target) return false
+    }
     if (activeNs.value !== 'all' && p.namespace !== activeNs.value) return false
     if (podFilter.value !== 'all' && p.phase !== podFilter.value) return false
     if (search.value) {
       const q = search.value.toLowerCase()
-      return p.name.includes(q) || p.namespace.includes(q) || p.node.includes(q)
+      return p.name.includes(q) || p.namespace.includes(q) || p.node.includes(q) || p.meshNodeName.toLowerCase().includes(q)
     }
     return true
   })
@@ -352,6 +416,12 @@ const tabs = computed((): Array<{ label: string; value: TabValue; count: number 
   { label: 'Services',    value: 'services',    count: 0 },
   { label: 'Config',      value: 'config',      count: 0 },
 ])
+
+// ── Navigation ────────────────────────────────────────────────────────────
+function openPod(pod: PodRow) {
+  nodesStore.select(pod.meshNodeId)
+  navigateTo(`/kubernetes/pods/${pod.namespace}/${pod.name}`)
+}
 
 function phaseVariant(phase: string) {
   if (phase === 'Running')   return 'success' as const
@@ -606,6 +676,23 @@ async function runApply() {
 .mono  { font-family: monospace; font-size: 0.75rem; }
 .muted { color: var(--text-dim); }
 .sep   { color: var(--border-strong); }
+
+.cluster-header__subtitle {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-left: 0.25rem;
+}
+
+.cluster-chip {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cluster-chip--local  { background: rgba(96,165,250,0.1);  color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+.cluster-chip--remote { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.3); }
 
 /* ── Apply bar ──────────────────────────────────────────────────────────── */
 .apply-btn {

@@ -20,6 +20,7 @@ export interface SetupRequest {
     hub_endpoint?:    string
     hub_public_key?:  string
     hub_allowed_ips?: string
+    hub_hmac_key?:    string
   }
   admin: { username: string; password: string }
   recovery?: { n_shares: number; threshold: number }
@@ -72,6 +73,18 @@ export interface NodeRecord {
   public_key: string
 }
 
+export interface PeerStatus {
+  public_key:     string
+  node_id?:       string
+  node_name?:     string
+  endpoint?:      string
+  allowed_ips?:   string
+  last_handshake: number
+  rx_bytes:       number
+  tx_bytes:       number
+  quality:        'good' | 'degraded' | 'dead'
+}
+
 export interface DockerContainer {
   Id:      string
   Names:   string[]
@@ -122,11 +135,28 @@ export interface AuditEntry {
 }
 
 export interface TraceEntry {
-  time:        string
-  name:        string
-  duration_ms: number
-  status:      'ok' | 'error'
-  error?:      string
+  trace_id?:      string
+  span_id?:       string
+  parent_span_id?: string
+  name:           string
+  service?:       string
+  kind?:          string
+  time:           string
+  duration_ms:    number
+  status:         'ok' | 'error' | 'unset'
+  error?:         string
+  source?:        string
+  attributes?:    Record<string, string>
+}
+
+export interface MetricPoint {
+  time:     string
+  name:     string
+  service?: string
+  source?:  string
+  type:     string
+  value:    number
+  labels?:  Record<string, string>
 }
 
 export interface GitSyncRequest {
@@ -142,6 +172,14 @@ export function useApi() {
   function h(): Record<string, string> {
     const t = getToken()
     return t ? { Authorization: `Bearer ${t}` } : {}
+  }
+
+  // Like h() but also injects X-Target-Node when a remote node is selected.
+  function nh(): Record<string, string> {
+    const hdrs = h()
+    const { selectedId } = useNodesStore()
+    if (selectedId) hdrs['X-Target-Node'] = selectedId
+    return hdrs
   }
 
   // ── Auth / setup (public) ────────────────────────────────────────────────
@@ -243,24 +281,27 @@ export function useApi() {
   }
 
   // ── Docker ───────────────────────────────────────────────────────────────
-  async function listContainers(): Promise<DockerContainer[]> {
-    return $fetch<DockerContainer[]>(`${BASE}/docker/containers`, { headers: h() })
+  async function listContainers(nodeId?: string): Promise<DockerContainer[]> {
+    const hdrs = nodeId ? { ...h(), 'X-Target-Node': nodeId } : h()
+    return $fetch<DockerContainer[]>(`${BASE}/docker/containers`, { headers: hdrs })
   }
 
   async function getContainerInspect(id: string): Promise<any> {
-    return $fetch<any>(`${BASE}/docker/containers/${id}`, { headers: h() })
+    return $fetch<any>(`${BASE}/docker/containers/${id}`, { headers: nh() })
   }
 
   async function getContainerLogsJSON(id: string, tail = 100): Promise<Array<{ ts: string; stream: string; msg: string }>> {
-    return $fetch<Array<{ ts: string; stream: string; msg: string }>>(`${BASE}/docker/containers/${id}/logs-json?tail=${tail}`, { headers: h() })
+    return $fetch<Array<{ ts: string; stream: string; msg: string }>>(`${BASE}/docker/containers/${id}/logs-json?tail=${tail}`, { headers: nh() })
   }
 
-  async function getContainerStats(id: string): Promise<{ cpu_percent: number; mem_usage: number; mem_limit: number; net_rx: number; net_tx: number; blk_read: number; blk_write: number }> {
-    return $fetch(`${BASE}/docker/containers/${id}/stats-snapshot`, { headers: h() })
+  async function getContainerStats(id: string, nodeId?: string | null): Promise<{ cpu_percent: number; mem_usage: number; mem_limit: number; net_rx: number; net_tx: number; blk_read: number; blk_write: number }> {
+    // nodeId undefined → honour global node selector (nh); null → local; string → explicit remote
+    const hdrs = nodeId === undefined ? nh() : (nodeId ? { ...h(), 'X-Target-Node': nodeId } : h())
+    return $fetch(`${BASE}/docker/containers/${id}/stats-snapshot`, { headers: hdrs })
   }
 
   async function deployCompose(yaml: string, nodeId?: string): Promise<{ output?: string; error?: string }> {
-    const hdrs: Record<string, string> = { ...h(), 'Content-Type': 'text/yaml' }
+    const hdrs: Record<string, string> = { ...nh(), 'Content-Type': 'text/yaml' }
     if (nodeId) hdrs['X-Target-Node'] = nodeId
     return $fetch<{ output?: string; error?: string }>(`${BASE}/docker/deploy-compose`, {
       method: 'POST', body: yaml, headers: hdrs,
@@ -268,7 +309,7 @@ export function useApi() {
   }
 
   async function applyK8s(yaml: string, nodeId?: string): Promise<{ output?: string; error?: string }> {
-    const hdrs: Record<string, string> = { ...h(), 'Content-Type': 'text/yaml' }
+    const hdrs: Record<string, string> = { ...nh(), 'Content-Type': 'text/yaml' }
     if (nodeId) hdrs['X-Target-Node'] = nodeId
     return $fetch<{ output?: string; error?: string }>(`${BASE}/kubernetes/apply`, {
       method: 'POST', body: yaml, headers: hdrs,
@@ -276,41 +317,44 @@ export function useApi() {
   }
 
   async function getK8sPod(ns: string, name: string): Promise<any> {
-    return $fetch<any>(`${BASE}/kubernetes/${ns}/pods/${name}`, { headers: h() })
+    return $fetch<any>(`${BASE}/kubernetes/${ns}/pods/${name}`, { headers: nh() })
   }
 
   async function getK8sPodLogsJSON(ns: string, name: string, container?: string, tail = 100): Promise<Array<{ ts: string; msg: string }>> {
     const q = new URLSearchParams({ tail: String(tail) })
     if (container) q.set('container', container)
-    return $fetch<Array<{ ts: string; msg: string }>>(`${BASE}/kubernetes/${ns}/pods/${name}/logs-json?${q}`, { headers: h() })
+    return $fetch<Array<{ ts: string; msg: string }>>(`${BASE}/kubernetes/${ns}/pods/${name}/logs-json?${q}`, { headers: nh() })
   }
 
-  async function getK8sSummary(): Promise<{ pods: number; running: number; pending: number; failed: number; succeeded: number; namespaces: number; nodes: number; deployments: number; healthy_deploys: number; unhealthy_deploys: number }> {
-    return $fetch(`${BASE}/kubernetes/summary`, { headers: h() })
+  async function getK8sSummary(nodeId?: string | null): Promise<{ pods: number; running: number; pending: number; failed: number; succeeded: number; namespaces: number; nodes: number; deployments: number; healthy_deploys: number; unhealthy_deploys: number }> {
+    // undefined → honour global selector (nh); null → explicit local (h); string → explicit remote
+    const hdrs = nodeId === undefined ? nh() : (nodeId ? { ...h(), 'X-Target-Node': nodeId } : h())
+    return $fetch(`${BASE}/kubernetes/summary`, { headers: hdrs })
   }
 
-  async function listAllK8sPods(): Promise<any> {
-    return $fetch<any>(`${BASE}/kubernetes/pods`, { headers: h() })
+  async function listAllK8sPods(nodeId?: string | null): Promise<any> {
+    const hdrs = nodeId === undefined ? nh() : (nodeId ? { ...h(), 'X-Target-Node': nodeId } : h())
+    return $fetch<any>(`${BASE}/kubernetes/pods`, { headers: hdrs })
   }
 
   async function deleteK8sPod(ns: string, name: string): Promise<void> {
-    await $fetch(`${BASE}/kubernetes/${ns}/pods/${name}`, { method: 'DELETE', headers: h() })
+    await $fetch(`${BASE}/kubernetes/${ns}/pods/${name}`, { method: 'DELETE', headers: nh() })
   }
 
   async function startContainer(id: string): Promise<void> {
-    await $fetch(`${BASE}/docker/containers/${id}/start`, { method: 'POST', headers: h() })
+    await $fetch(`${BASE}/docker/containers/${id}/start`, { method: 'POST', headers: nh() })
   }
 
   async function stopContainer(id: string): Promise<void> {
-    await $fetch(`${BASE}/docker/containers/${id}/stop`, { method: 'POST', headers: h() })
+    await $fetch(`${BASE}/docker/containers/${id}/stop`, { method: 'POST', headers: nh() })
   }
 
   async function restartContainer(id: string): Promise<void> {
-    await $fetch(`${BASE}/docker/containers/${id}/restart`, { method: 'POST', headers: h() })
+    await $fetch(`${BASE}/docker/containers/${id}/restart`, { method: 'POST', headers: nh() })
   }
 
   async function removeContainer(id: string): Promise<void> {
-    await $fetch(`${BASE}/docker/containers/${id}`, { method: 'DELETE', headers: h() })
+    await $fetch(`${BASE}/docker/containers/${id}`, { method: 'DELETE', headers: nh() })
   }
 
   // ── Plugins ──────────────────────────────────────────────────────────────
@@ -372,17 +416,57 @@ export function useApi() {
     return $fetch<{ total: number; healthy: number; degraded: number }>(`${BASE}/network/mesh-summary`, { headers: h() })
   }
 
+  async function getMeshPeers(): Promise<PeerStatus[]> {
+    return $fetch<PeerStatus[]>(`${BASE}/network/peers`, { headers: h() })
+  }
+
+  async function addPeer(payload: { public_key: string; endpoint: string; allowed_ips: string; node_id?: string; persistent_keepalive?: number }): Promise<void> {
+    await $fetch(`${BASE}/network/peer`, { method: 'POST', body: payload, headers: h() })
+  }
+
+  async function getHubKey(): Promise<{ hmac_key: string }> {
+    return $fetch<{ hmac_key: string }>(`${BASE}/network/hub-key`, { headers: h() })
+  }
+
   // ── Observability ─────────────────────────────────────────────────────────
   async function listLogs(): Promise<LogEntry[]> {
-    return $fetch<LogEntry[]>(`${BASE}/observability/logs`, { headers: h() })
+    return $fetch<LogEntry[]>(`${BASE}/observability/logs`, { headers: nh() })
   }
 
   async function listAuditLogs(): Promise<AuditEntry[]> {
-    return $fetch<AuditEntry[]>(`${BASE}/audit/logs`, { headers: h() })
+    return $fetch<AuditEntry[]>(`${BASE}/audit/logs`, { headers: nh() })
   }
 
   async function listTraces(): Promise<TraceEntry[]> {
-    return $fetch<TraceEntry[]>(`${BASE}/observability/traces`, { headers: h() })
+    return $fetch<TraceEntry[]>(`${BASE}/observability/traces`, { headers: nh() })
+  }
+
+  async function listMetrics(params?: { name?: string; service?: string; limit?: number }): Promise<MetricPoint[]> {
+    const q = new URLSearchParams()
+    if (params?.name)    q.set('name',    params.name)
+    if (params?.service) q.set('service', params.service)
+    if (params?.limit)   q.set('limit',   String(params.limit))
+    return $fetch<MetricPoint[]>(`${BASE}/observability/metrics?${q}`, { headers: nh() })
+  }
+
+  async function getContainerTraces(id: string, tail = 200): Promise<TraceEntry[]> {
+    return $fetch<TraceEntry[]>(`${BASE}/docker/containers/${id}/traces?tail=${tail}`, { headers: nh() })
+  }
+
+  async function getPodTraces(ns: string, name: string, container?: string, tail = 200): Promise<TraceEntry[]> {
+    const q = new URLSearchParams({ tail: String(tail) })
+    if (container) q.set('container', container)
+    return $fetch<TraceEntry[]>(`${BASE}/kubernetes/${ns}/pods/${name}/traces?${q}`, { headers: nh() })
+  }
+
+  async function scrapeContainerMetrics(id: string, port = '9090', path = '/metrics'): Promise<MetricPoint[]> {
+    const q = new URLSearchParams({ port, path })
+    return $fetch<MetricPoint[]>(`${BASE}/docker/containers/${id}/metrics-scrape?${q}`, { headers: nh() })
+  }
+
+  async function scrapePodMetrics(ns: string, name: string, port = '9090', path = '/metrics'): Promise<MetricPoint[]> {
+    const q = new URLSearchParams({ port, path })
+    return $fetch<MetricPoint[]>(`${BASE}/kubernetes/${ns}/pods/${name}/metrics-scrape?${q}`, { headers: nh() })
   }
 
   async function gitSync(payload: GitSyncRequest): Promise<{ message: string }> {
@@ -433,8 +517,9 @@ export function useApi() {
     applyK8s, getK8sPod, getK8sPodLogsJSON, getK8sSummary, listAllK8sPods, deleteK8sPod,
     listPlugins, unloadPlugin, uploadPlugin,
     listStorageBackends, createStorageBackend, deleteStorageBackend, testStorageBackend, listStorageBuckets,
-    getMeshSummary,
-    listLogs, listAuditLogs, listTraces,
+    getMeshSummary, getMeshPeers, addPeer, getHubKey,
+    listLogs, listAuditLogs, listTraces, listMetrics,
+    getContainerTraces, getPodTraces, scrapeContainerMetrics, scrapePodMetrics,
     gitSync,
     getRecoveryCodeStatus, regenerateRecoveryCodes, forgotPassword, auditExportUrl,
     exportDatabase,

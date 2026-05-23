@@ -68,7 +68,7 @@ func TestWireGuardHandlerAddPeer(t *testing.T) {
 
 			wg := &mockWG{addPeerErr: tt.mockErr}
 			healer := sync.NewHealer(sync.HealerConfig{}, &sync.DefaultWGChecker{})
-			handler := handlers.NewWireGuardHandler(tt.ifaceName, wg, healer)
+			handler := handlers.NewWireGuardHandler(tt.ifaceName, wg, healer, nil, nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/wireguard/peers/add", bytes.NewReader(body))
 			rw := httptest.NewRecorder()
@@ -112,7 +112,7 @@ func TestWireGuardHandlerGetStatus(t *testing.T) {
 			}
 
 			healer := sync.NewHealer(sync.HealerConfig{}, &sync.DefaultWGChecker{})
-			handler := handlers.NewWireGuardHandler(tt.ifaceName, wg, healer)
+			handler := handlers.NewWireGuardHandler(tt.ifaceName, wg, healer, nil, nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/wireguard/status", nil)
 			rw := httptest.NewRecorder()
@@ -154,7 +154,7 @@ func TestWireGuardHandlerPeerRequestValidation(t *testing.T) {
 			})
 
 			healer := sync.NewHealer(sync.HealerConfig{}, &sync.DefaultWGChecker{})
-			handler := handlers.NewWireGuardHandler("wg0", &mockWG{}, healer)
+			handler := handlers.NewWireGuardHandler("wg0", &mockWG{}, healer, nil, nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/wireguard/peers/add", bytes.NewReader(body))
 			rw := httptest.NewRecorder()
@@ -175,7 +175,7 @@ func TestWireGuardHandlerPeerRequestValidation(t *testing.T) {
 // TestWireGuardHandlerInterfaceNames
 func TestWireGuardHandlerInterfaceNames(t *testing.T) {
 	healer := sync.NewHealer(sync.HealerConfig{}, &sync.DefaultWGChecker{})
-	handler := handlers.NewWireGuardHandler("wg-test", &mockWG{}, healer)
+	handler := handlers.NewWireGuardHandler("wg-test", &mockWG{}, healer, nil, nil)
 
 	if handler.IfaceName != "wg-test" {
 		t.Errorf("Expected interface name wg-test, got %s", handler.IfaceName)
@@ -185,7 +185,7 @@ func TestWireGuardHandlerInterfaceNames(t *testing.T) {
 // TestWireGuardHandlerIPValidation
 func TestWireGuardHandlerIPValidation(t *testing.T) {
 	healer := sync.NewHealer(sync.HealerConfig{}, &sync.DefaultWGChecker{})
-	handler := handlers.NewWireGuardHandler("wg0", &mockWG{}, healer)
+	handler := handlers.NewWireGuardHandler("wg0", &mockWG{}, healer, nil, nil)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"public_key":  "key",
@@ -215,7 +215,7 @@ func TestHandleMeshSummary(t *testing.T) {
 
 	wg := &mockWG{dump: dump}
 	healer := sync.NewHealer(sync.HealerConfig{}, &sync.DefaultWGChecker{})
-	h := handlers.NewWireGuardHandler("wg0", wg, healer)
+	h := handlers.NewWireGuardHandler("wg0", wg, healer, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/wireguard/mesh-summary", nil)
 	w := httptest.NewRecorder()

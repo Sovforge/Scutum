@@ -28,6 +28,32 @@ func (d PostgresDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT 'success'`,
+		// OTEL span fields
+		`ALTER TABLE traces ADD COLUMN IF NOT EXISTS trace_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN IF NOT EXISTS span_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN IF NOT EXISTS parent_span_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN IF NOT EXISTS service TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE traces ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE traces ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE traces ADD COLUMN IF NOT EXISTS attributes JSONB NOT NULL DEFAULT '{}'`,
+		// OTEL log fields
+		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS service TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS trace_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS span_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS attributes JSONB NOT NULL DEFAULT '{}'`,
+		// otel_metrics table
+		`CREATE TABLE IF NOT EXISTS otel_metrics (
+			id         TEXT PRIMARY KEY,
+			time       TIMESTAMPTZ NOT NULL,
+			name       TEXT NOT NULL,
+			service    TEXT NOT NULL DEFAULT '',
+			source     TEXT NOT NULL DEFAULT '',
+			type       TEXT NOT NULL DEFAULT 'gauge',
+			value      DOUBLE PRECISION NOT NULL DEFAULT 0,
+			labels     JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
 	} {
 		db.ExecContext(ctx, q)
 	}
@@ -38,7 +64,7 @@ const postgresSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
 	id          TEXT PRIMARY KEY,
 	name        TEXT NOT NULL,
-	type        TEXT NOT NULL CHECK(type IN ('hub','peer','edge')),
+	type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
 	address     TEXT NOT NULL,
 	public_key  TEXT NOT NULL,
 	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
