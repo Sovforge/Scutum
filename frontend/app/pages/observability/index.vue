@@ -225,84 +225,46 @@
           </div>
         </div>
 
-        <div class="k8s-row">
-          <UiCard title="Pod Status">
-            <template #header-right>
-              <span class="count-label">{{ k8sSummary?.pods ?? 0 }} total</span>
-            </template>
-            <div v-if="k8sLoading" class="loading-hint">Loading…</div>
-            <div v-else-if="!k8sSummary" class="loading-hint">Kubernetes not reachable.</div>
-            <div v-else class="phase-bars">
-              <div class="phase-row">
-                <span class="phase-label">Running</span>
-                <div class="phase-track">
-                  <div class="phase-fill phase-fill--ok"
-                    :style="{ width: k8sSummary.pods > 0 ? (k8sSummary.running / k8sSummary.pods * 100) + '%' : '0%' }" />
-                </div>
-                <span class="phase-val val--ok">{{ k8sSummary.running }}</span>
-              </div>
-              <div class="phase-row">
-                <span class="phase-label">Pending</span>
-                <div class="phase-track">
-                  <div class="phase-fill phase-fill--warn"
-                    :style="{ width: k8sSummary.pods > 0 ? (k8sSummary.pending / k8sSummary.pods * 100) + '%' : '0%' }" />
-                </div>
-                <span class="phase-val val--warn">{{ k8sSummary.pending }}</span>
-              </div>
-              <div class="phase-row">
-                <span class="phase-label">Failed</span>
-                <div class="phase-track">
-                  <div class="phase-fill phase-fill--fail"
-                    :style="{ width: k8sSummary.pods > 0 ? (k8sSummary.failed / k8sSummary.pods * 100) + '%' : '0%' }" />
-                </div>
-                <span class="phase-val val--fail">{{ k8sSummary.failed }}</span>
-              </div>
-              <div class="phase-row">
-                <span class="phase-label">Succeeded</span>
-                <div class="phase-track">
-                  <div class="phase-fill phase-fill--muted"
-                    :style="{ width: k8sSummary.pods > 0 ? (k8sSummary.succeeded / k8sSummary.pods * 100) + '%' : '0%' }" />
-                </div>
-                <span class="phase-val val--muted">{{ k8sSummary.succeeded }}</span>
-              </div>
-            </div>
-          </UiCard>
-
-          <UiCard title="Deployments">
-            <template #header-right>
-              <span class="count-label">{{ k8sSummary?.deployments ?? 0 }} total</span>
-            </template>
-            <div v-if="k8sLoading" class="loading-hint">Loading…</div>
-            <div v-else-if="!k8sSummary" class="loading-hint">Kubernetes not reachable.</div>
-            <div v-else class="phase-bars">
-              <div class="phase-row">
-                <span class="phase-label">Healthy</span>
-                <div class="phase-track">
-                  <div class="phase-fill phase-fill--ok"
-                    :style="{ width: k8sSummary.deployments > 0 ? (k8sSummary.healthy_deploys / k8sSummary.deployments * 100) + '%' : '0%' }" />
-                </div>
-                <span class="phase-val val--ok">{{ k8sSummary.healthy_deploys }}</span>
-              </div>
-              <div class="phase-row">
-                <span class="phase-label">Degraded</span>
-                <div class="phase-track">
-                  <div class="phase-fill phase-fill--fail"
-                    :style="{ width: k8sSummary.deployments > 0 ? (k8sSummary.unhealthy_deploys / k8sSummary.deployments * 100) + '%' : '0%' }" />
-                </div>
-                <span class="phase-val val--fail">{{ k8sSummary.unhealthy_deploys }}</span>
-              </div>
-            </div>
-          </UiCard>
-
-          <UiCard title="Cluster">
-            <dl class="info-list">
-              <div class="info-list__row"><dt>Namespaces</dt><dd>{{ k8sSummary?.namespaces ?? '—' }}</dd></div>
-              <div class="info-list__row"><dt>Nodes</dt>     <dd>{{ k8sSummary?.nodes ?? '—' }}</dd></div>
-              <div class="info-list__row"><dt>Pods</dt>      <dd>{{ k8sSummary?.pods ?? '—' }}</dd></div>
-              <div class="info-list__row"><dt>Deployments</dt><dd>{{ k8sSummary?.deployments ?? '—' }}</dd></div>
-            </dl>
-          </UiCard>
-        </div>
+        <UiCard title="Kubernetes Clusters">
+          <template #header-right>
+            <span class="count-label">{{ k8sNodeSummaries.filter(n => n.summary).length }} / {{ k8sNodeSummaries.length }} reachable</span>
+          </template>
+          <div v-if="k8sLoading" class="loading-hint">Loading…</div>
+          <div v-else-if="k8sNodeSummaries.length === 0" class="loading-hint">No Kubernetes clusters found.</div>
+          <div v-else class="table-scroll">
+            <table class="stats-table">
+              <thead>
+                <tr>
+                  <th>Cluster</th>
+                  <th>Pods</th>
+                  <th>Running</th>
+                  <th>Pending</th>
+                  <th>Failed</th>
+                  <th>Deployments</th>
+                  <th>Namespaces</th>
+                  <th>K8s Nodes</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="n in k8sNodeSummaries" :key="n.nodeName" class="stats-table__row">
+                  <td><span class="cluster-chip" :class="n.nodeId ? 'cluster-chip--remote' : 'cluster-chip--local'">{{ n.nodeName }}</span></td>
+                  <template v-if="n.summary">
+                    <td>{{ n.summary.pods }}</td>
+                    <td><span :class="n.summary.running > 0 ? 'val--ok' : ''">{{ n.summary.running }}</span></td>
+                    <td><span :class="n.summary.pending > 0 ? 'val--warn' : ''">{{ n.summary.pending }}</span></td>
+                    <td><span :class="n.summary.failed > 0 ? 'val--fail' : ''">{{ n.summary.failed }}</span></td>
+                    <td>{{ n.summary.deployments }}</td>
+                    <td>{{ n.summary.namespaces }}</td>
+                    <td>{{ n.summary.nodes }}</td>
+                  </template>
+                  <template v-else>
+                    <td colspan="7" class="stats-na">Not reachable</td>
+                  </template>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </UiCard>
       </template>
 
     </div>
@@ -605,8 +567,32 @@ interface K8sSummary {
   namespaces: number; nodes: number; deployments: number
   healthy_deploys: number; unhealthy_deploys: number
 }
-const k8sSummary = ref<K8sSummary | null>(null)
-const k8sLoading = ref(false)
+
+interface K8sNodeSummary {
+  nodeId:   string | null
+  nodeName: string
+  summary:  K8sSummary | null
+}
+
+const k8sNodeSummaries = ref<K8sNodeSummary[]>([])
+const k8sLoading       = ref(false)
+
+const k8sSummary = computed<K8sSummary | null>(() => {
+  const valid = k8sNodeSummaries.value.map(n => n.summary).filter(Boolean) as K8sSummary[]
+  if (valid.length === 0) return null
+  return {
+    pods:              valid.reduce((a, s) => a + s.pods,              0),
+    running:           valid.reduce((a, s) => a + s.running,           0),
+    pending:           valid.reduce((a, s) => a + s.pending,           0),
+    failed:            valid.reduce((a, s) => a + s.failed,            0),
+    succeeded:         valid.reduce((a, s) => a + s.succeeded,         0),
+    namespaces:        valid.reduce((a, s) => a + s.namespaces,        0),
+    nodes:             valid.reduce((a, s) => a + s.nodes,             0),
+    deployments:       valid.reduce((a, s) => a + s.deployments,       0),
+    healthy_deploys:   valid.reduce((a, s) => a + s.healthy_deploys,   0),
+    unhealthy_deploys: valid.reduce((a, s) => a + s.unhealthy_deploys, 0),
+  }
+})
 
 interface ContainerStat {
   cpu_percent: number; mem_usage: number; mem_limit: number
@@ -646,35 +632,52 @@ async function refreshStats() {
   statsLoading.value = false
 }
 
-const k8sSummaryCards = computed(() => [
-  { label: 'Pods',        value: String(k8sSummary.value?.pods        ?? '—'), icon: 'lucide:box',          sub: 'total',     cls: '' },
-  { label: 'Running',     value: String(k8sSummary.value?.running     ?? '—'), icon: 'lucide:circle-check', sub: 'pods',      cls: (k8sSummary.value?.running ?? 0) > 0 ? 'val--ok' : '' },
-  { label: 'Deployments', value: String(k8sSummary.value?.deployments ?? '—'), icon: 'lucide:layers',       sub: 'total',     cls: '' },
-  { label: 'Nodes',       value: String(k8sSummary.value?.nodes       ?? '—'), icon: 'lucide:server',       sub: 'k8s nodes', cls: '' },
-])
+const k8sSummaryCards = computed(() => {
+  const reachable = k8sNodeSummaries.value.filter(n => n.summary !== null).length
+  return [
+    { label: 'Clusters',    value: String(reachable),                            icon: 'lucide:network',      sub: 'reachable',  cls: reachable > 0 ? 'val--ok' : '' },
+    { label: 'Pods',        value: String(k8sSummary.value?.pods        ?? '—'), icon: 'lucide:box',          sub: 'total',      cls: '' },
+    { label: 'Running',     value: String(k8sSummary.value?.running     ?? '—'), icon: 'lucide:circle-check', sub: 'pods',       cls: (k8sSummary.value?.running ?? 0) > 0 ? 'val--ok' : '' },
+    { label: 'Deployments', value: String(k8sSummary.value?.deployments ?? '—'), icon: 'lucide:layers',       sub: 'total',      cls: '' },
+    { label: 'K8s Nodes',   value: String(k8sSummary.value?.nodes       ?? '—'), icon: 'lucide:server',       sub: 'k8s nodes',  cls: '' },
+  ]
+})
 
 async function refreshMetrics() {
   metricsLoading.value = true
   k8sLoading.value     = true
-  try {
-    const nodes = await api.listNodes().catch(() => [] as NodeRecord[])
-    const all: NodeContainer[] = []
 
+  const nodes      = await api.listNodes().catch(() => [] as NodeRecord[])
+  const edgeNodes  = nodes.filter((n: NodeRecord) => n.type !== 'hub')
+
+  // Docker: load containers from all nodes
+  try {
+    const all: NodeContainer[] = []
     const localCtrs = await api.listContainers().catch(() => [])
     all.push(...localCtrs.map(c => ({ ...c, nodeId: null, nodeName: 'Local' })))
-
-    for (const n of nodes.filter(n => n.type !== 'hub')) {
+    for (const n of edgeNodes) {
       const ctrs = await api.listContainers(n.id).catch(() => [])
       all.push(...ctrs.map(c => ({ ...c, nodeId: n.id, nodeName: n.name })))
     }
-
     rawContainers.value = all
   } catch {} finally {
     metricsLoading.value = false
   }
   refreshStats()
+
+  // Kubernetes: load summaries from all nodes
   try {
-    k8sSummary.value = await api.getK8sSummary()
+    const allNodes: Array<{ id: string | null; name: string }> = [
+      { id: null, name: 'Local' },
+      ...edgeNodes.map((n: NodeRecord) => ({ id: n.id, name: n.name })),
+    ]
+    k8sNodeSummaries.value = await Promise.all(
+      allNodes.map((n): Promise<K8sNodeSummary> =>
+        api.getK8sSummary(n.id)
+          .then((s): K8sNodeSummary => ({ nodeId: n.id, nodeName: n.name, summary: s }))
+          .catch((): K8sNodeSummary => ({ nodeId: n.id, nodeName: n.name, summary: null }))
+      )
+    )
   } catch {} finally {
     k8sLoading.value = false
   }
@@ -1287,4 +1290,15 @@ onUnmounted(() => { if (streamAbort) streamAbort.abort() })
 }
 .node-chip--local  { background: rgba(96,165,250,0.1);  color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
 .node-chip--remote { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.3); }
+
+.cluster-chip {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cluster-chip--local  { background: rgba(96,165,250,0.1);  color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+.cluster-chip--remote { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.3); }
 </style>

@@ -4,11 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 )
 
 type KubernetesClient struct {
@@ -87,36 +91,73 @@ func (c *KubernetesClient) DoStream(method, path string, body interface{}) (io.R
 	return resp.Body, nil
 }
 
-// HijackPod is a custom method to handle WebSocket-like connections for exec/attach. It performs the HTTP upgrade and returns the raw connection.
+// HijackPod upgrades an HTTP connection to the Kubernetes WebSocket exec protocol
+// (v4.channel.k8s.io) and returns the raw connection for bidirectional streaming.
+// It handles both plain HTTP (kubectl proxy) and in-cluster HTTPS.
 func (c *KubernetesClient) HijackPod(ctx context.Context, path string, protocol string) (net.Conn, *bufio.Reader, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, nil)
+	u, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Use the protocol argument here
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", protocol)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	// Manual Dialing logic...
-	host := req.URL.Host
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", host)
-	if err != nil {
+	// Random WebSocket handshake key
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
 		return nil, nil, err
 	}
+	wsKey := base64.StdEncoding.EncodeToString(raw)
 
-	err = req.Write(conn)
+	// Resolve host:port
+	host := u.Host
+	if u.Port() == "" {
+		if u.Scheme == "https" {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+
+	// Dial — use TLS for in-cluster HTTPS, plain TCP for kubectl proxy
+	var conn net.Conn
+	if u.Scheme == "https" {
+		var tlsCfg *tls.Config
+		if t, ok := c.httpClient.Transport.(*http.Transport); ok {
+			tlsCfg = t.TLSClientConfig
+		}
+		conn, err = tls.DialWithDialer(&net.Dialer{}, "tcp", host, tlsCfg)
+	} else {
+		conn, err = (&net.Dialer{}).DialContext(ctx, "tcp", host)
+	}
 	if err != nil {
+		return nil, nil, fmt.Errorf("dial %s: %w", host, err)
+	}
+
+	// Standard WebSocket upgrade with Kubernetes subprotocol
+	reqStr := "GET " + u.RequestURI() + " HTTP/1.1\r\n" +
+		"Host: " + u.Host + "\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Sec-WebSocket-Version: 13\r\n" +
+		"Sec-WebSocket-Key: " + wsKey + "\r\n" +
+		"Sec-WebSocket-Protocol: " + protocol + "\r\n" +
+		"Authorization: Bearer " + c.token + "\r\n\r\n"
+
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
 		conn.Close()
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("write upgrade request: %w", err)
 	}
 
 	reader := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(reader, req)
-	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("upgrade failed: %v", err)
+		return nil, nil, fmt.Errorf("read upgrade response: %w", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		conn.Close()
+		return nil, nil, fmt.Errorf("exec upgrade failed (HTTP %d) — check pod is running and container name is correct", resp.StatusCode)
 	}
 
 	return conn, reader, nil

@@ -426,7 +426,7 @@ func (h *KubernetesHandler) HandleTerminal(w http.ResponseWriter, r *http.Reques
 	}
 	defer browserConn.Close()
 
-	execPath := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/exec?stdout=true&stdin=true&stderr=true&tty=true&command=sh", namespace, pod)
+	execPath := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/exec?stdout=true&stdin=true&stderr=true&tty=true&command=/bin/sh", namespace, pod)
 	if container != "" {
 		execPath += "&container=" + url.QueryEscape(container)
 	}
