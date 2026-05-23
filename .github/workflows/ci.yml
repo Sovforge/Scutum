@@ -7,7 +7,7 @@ on:
     branches: [main, develop]
 
 env:
-  IMAGE: ghcr.io/${{ github.repository }}
+  IMAGE: ghcr.io/sovforge/scutum
 
 jobs:
   test:
