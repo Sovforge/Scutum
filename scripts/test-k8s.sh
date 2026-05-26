@@ -6,8 +6,7 @@
 # Usage: ./scripts/test-k8s.sh [--keep]
 #   --keep  do not delete the cluster after the test (useful for debugging)
 #
-# The test uses the pre-built GHCR image by default. Set IMAGE=<ref> to use
-# a locally built image instead, e.g.:
+# Set IMAGE=<ref> to use a locally built image instead of pulling from GHCR:
 #   IMAGE=scutum:dev ./scripts/test-k8s.sh
 set -euo pipefail
 
@@ -18,6 +17,8 @@ CHART="$(cd "$(dirname "$0")/../helm/scutum" && pwd)"
 IMAGE="${IMAGE:-ghcr.io/sovforge/scutum:latest}"
 KEEP_CLUSTER=false
 TIMEOUT=120s
+KUBECONFIG_FILE=""
+PF_PID=""
 
 for arg in "$@"; do
   [[ "$arg" == "--keep" ]] && KEEP_CLUSTER=true
@@ -34,11 +35,13 @@ require_cmd() {
 }
 
 cleanup() {
+  [[ -n "$PF_PID" ]] && kill "$PF_PID" 2>/dev/null || true
+  [[ -n "$KUBECONFIG_FILE" ]] && rm -f "$KUBECONFIG_FILE"
   if [[ "$KEEP_CLUSTER" == "false" ]]; then
     log "Deleting kind cluster '${CLUSTER_NAME}'..."
     kind delete cluster --name "$CLUSTER_NAME" 2>/dev/null || true
   else
-    log "Cluster '${CLUSTER_NAME}' kept. Delete with: kind delete cluster --name ${CLUSTER_NAME}"
+    log "Cluster kept. Delete with: kind delete cluster --name ${CLUSTER_NAME}"
   fi
 }
 trap cleanup EXIT
@@ -59,27 +62,14 @@ if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
   log "Reusing existing kind cluster '${CLUSTER_NAME}'"
 else
   log "Creating kind cluster '${CLUSTER_NAME}'..."
-  # Expose a NodePort range so we can reach services from the host
-  cat <<EOF | kind create cluster --name "$CLUSTER_NAME" --config=-
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-    extraPortMappings:
-      - containerPort: 30080
-        hostPort: 30080
-        protocol: TCP
-EOF
+  kind create cluster --name "$CLUSTER_NAME"
 fi
 
-export KUBECONFIG
-KUBECONFIG="$(kind get kubeconfig-path --name "$CLUSTER_NAME" 2>/dev/null || kind get kubeconfig --name "$CLUSTER_NAME" | grep -o '/[^:]*')"
-KUBECONFIG="$(kind get kubeconfig --name "$CLUSTER_NAME" | kubectl config view --flatten --merge -o json | kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || true)"
-# Simpler: just export via kind directly
 KUBECONFIG_FILE="$(mktemp)"
 kind get kubeconfig --name "$CLUSTER_NAME" > "$KUBECONFIG_FILE"
 export KUBECONFIG="$KUBECONFIG_FILE"
-trap "rm -f '$KUBECONFIG_FILE'; cleanup" EXIT
+
+kubectl cluster-info --context "kind-${CLUSTER_NAME}" > /dev/null
 
 # ── load image ────────────────────────────────────────────────────────────────
 
@@ -103,8 +93,6 @@ helm upgrade --install "$RELEASE" "$CHART" \
   --set tls.autoGenerate=false \
   --set livenessProbe.httpGet.scheme=HTTP \
   --set readinessProbe.httpGet.scheme=HTTP \
-  --set service.api.type=NodePort \
-  --set service.api.nodePort=30080 \
   --wait \
   --timeout "$TIMEOUT"
 
@@ -112,44 +100,57 @@ ok "Helm release installed"
 
 # ── wait for ready ────────────────────────────────────────────────────────────
 
-log "Waiting for pod to be ready (timeout: ${TIMEOUT})..."
+log "Waiting for StatefulSet rollout (timeout: ${TIMEOUT})..."
 kubectl rollout status statefulset/"${RELEASE}" \
   --namespace "$NAMESPACE" \
   --timeout "$TIMEOUT"
 ok "StatefulSet rollout complete"
 
+# ── port-forward ──────────────────────────────────────────────────────────────
+
+LOCAL_PORT=18080
+log "Starting port-forward on localhost:${LOCAL_PORT}..."
+kubectl port-forward \
+  --namespace "$NAMESPACE" \
+  "svc/${RELEASE}" \
+  "${LOCAL_PORT}:8080" &
+PF_PID=$!
+sleep 2  # give port-forward time to establish
+
 # ── health check ──────────────────────────────────────────────────────────────
 
-log "Checking health endpoint via NodePort :30080..."
+log "Checking GET /api/health..."
 for attempt in 1 2 3 4 5; do
-  if curl -sf "http://localhost:30080/api/health" | grep -q '"status"'; then
-    ok "Health endpoint responded: $(curl -sf http://localhost:30080/api/health)"
+  BODY=$(curl -sf "http://localhost:${LOCAL_PORT}/api/health" 2>/dev/null || true)
+  if echo "$BODY" | grep -q '"status"'; then
+    ok "Health endpoint responded: ${BODY}"
     break
   fi
   if [[ $attempt -eq 5 ]]; then
+    log "Pod logs:"
     kubectl logs --namespace "$NAMESPACE" \
       "$(kubectl get pods -n "$NAMESPACE" -o name | head -1)" --tail=40 || true
     fail "Health endpoint did not respond after ${attempt} attempts"
   fi
-  log "Attempt ${attempt}/5 failed, retrying in 5s..."
-  sleep 5
+  log "Attempt ${attempt}/5 — retrying in 3s..."
+  sleep 3
 done
 
 # ── Docker feature availability ───────────────────────────────────────────────
 
-log "Verifying Docker endpoint returns 503 (no socket mounted)..."
-STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
-  http://localhost:30080/api/docker/containers \
-  -H "Authorization: Bearer invalid" 2>/dev/null || true)
+log "Verifying Docker endpoint returns 503 when socket not mounted..."
+HTTP_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+  "http://localhost:${LOCAL_PORT}/api/docker/containers" \
+  -H "Authorization: Bearer test-token" 2>/dev/null || true)
 
-# 401/403 means the request reached the auth layer (before the Docker check),
-# which is also acceptable — auth runs first.
-if [[ "$STATUS" == "503" || "$STATUS" == "401" || "$STATUS" == "403" ]]; then
-  ok "Docker endpoint returned expected status ${STATUS} (no socket mounted)"
-else
-  fail "Docker endpoint returned unexpected status: ${STATUS} (expected 503/401/403)"
-fi
+# Auth middleware runs before the Docker check, so 401/403 is also acceptable.
+case "$HTTP_STATUS" in
+  503) ok "Docker endpoint returned 503 (socket not mounted — correct)" ;;
+  401|403) ok "Docker endpoint returned ${HTTP_STATUS} (auth layer reached before Docker check — acceptable)" ;;
+  *) fail "Docker endpoint returned unexpected status ${HTTP_STATUS} (expected 503/401/403)" ;;
+esac
 
 # ── summary ───────────────────────────────────────────────────────────────────
+
 echo ""
 ok "All k8s integration tests passed"
