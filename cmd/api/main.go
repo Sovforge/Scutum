@@ -389,6 +389,7 @@ func main() {
 	obsCtrl := handlers.NewObservabilityHandler(db, db)
 	otelCtrl := handlers.NewOTelHandler(db, db)
 	exportCtrl := handlers.NewExportHandler(db)
+	operatorCtrl := handlers.NewOperatorHandler(db)
 	utils.SetObsSink(db)
 	setupCtrl := handlers.NewSetupHandler(db, filepath.Join(secretsDir, "kms.toml"), func(newProvider kms.Provider) {
 		// All secrets written during setup (wg0_config, sync_hmac_key, hub_hmac_key,
@@ -538,6 +539,9 @@ func main() {
 	syncCtrl := handlers.NewSyncHandler(db, pusher, clientTLSConfig)
 	apiMux.Handle("POST /sync/push", require("sync", "write", syncCtrl.HandlePush))
 	apiMux.Handle("POST /sync/register-edge", require("sync", "admin", syncCtrl.HandleRegisterEdge))
+
+	// Operator bootstrap (admin only — used by the Kubernetes operator)
+	apiMux.Handle("GET /operator/bootstrap", require("admin", "admin", operatorCtrl.HandleBootstrap))
 
 	// Recovery (emergency key recovery)
 	recoveryCtrl := handlers.NewRecoveryHandler(db, kmsProvider)

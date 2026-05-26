@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Kubernetes operator** (`operator/`): CRD-based cluster management with `ScutumHub` and `ScutumNode` custom resources. The operator reconciles StatefulSets, Services, RBAC, and ConfigMaps for hub and edge deployments; automatically enrolls edge nodes into the mesh via the hub enrollment API; and manages a bootstrap Secret per node containing WireGuard config and HMAC credentials. Requires `scutum.io/v1alpha1` CRDs installed via `operator/config/crd/`.
+- **Operator bootstrap endpoint** (`GET /api/operator/bootstrap`): Admin-only endpoint that returns the hub's WireGuard public key, listen port, HMAC key (base64), and mesh CIDR. Used by the operator to configure edge nodes without requiring direct access to the hub's secrets volume.
 - **Helm chart** (`helm/scutum`): Production-ready Helm chart deploying Scutum as a StatefulSet with a `ClusterIP` service for the API/UI and a `LoadBalancer` service for the WireGuard UDP port. Includes: TLS init container (self-signed cert generation on first start), Gateway API `HTTPRoute` template, `ClusterRole`/`ClusterRoleBinding` for Kubernetes in-cluster access, PVC-backed storage for `/data` and `/secrets`, and `NET_ADMIN` capability wiring for WireGuard.
 - **NAT roaming for edge nodes**: Remote nodes (e.g. laptops changing networks) now re-register their WireGuard endpoint with the hub every 2 minutes via a periodic ticker in `registerOwnEndpoint`. Previously this only ran at startup, meaning a network change required a restart before the mesh tunnel recovered.
 

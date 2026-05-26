@@ -1,0 +1,63 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: scutum-operator
+rules:
+  # Core resources
+  - apiGroups: [""]
+    resources:
+      - deployments
+      - statefulsets
+      - services
+      - configmaps
+      - secrets
+      - serviceaccounts
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Apps resources
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # RBAC — operator creates ClusterRoles/Bindings for the managed hubs
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - clusterroles
+      - clusterrolebindings
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Custom resources — read + status update
+  - apiGroups: ["scutum.io"]
+    resources:
+      - scutumhubs
+      - scutumnodes
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["scutum.io"]
+    resources:
+      - scutumhubs/status
+      - scutumnodes/status
+    verbs: ["update", "patch"]
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources:
+      - leases
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Events
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: scutum-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: scutum-operator
+subjects:
+  - kind: ServiceAccount
+    name: scutum-operator
+    namespace: scutum-system
