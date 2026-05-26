@@ -24,6 +24,7 @@
 
 - [⚡ Quick Start](#the-2-node-quick-start-under-60-seconds)
 - [☸️ Kubernetes / Helm](#kubernetes--helm)
+- [⚙️ Kubernetes Operator](#kubernetes-operator)
 - [🌐 Overview](#overview)
 - [🧩 Core Concepts](#core-concepts)
 - [🏗️ Architecture](#architecture)
@@ -243,6 +244,69 @@ helm upgrade --install scutum ./helm/scutum \
 
 ---
 
+## ⚙️ Kubernetes Operator
+
+The Scutum operator manages hub and edge deployments as first-class Kubernetes resources using two CRDs: `ScutumHub` and `ScutumNode`. The hub controller reconciles StatefulSets, Services, and RBAC; the node controller auto-enrolls edges into the mesh via the hub API and writes a per-node `bootstrap` Secret containing WireGuard config and HMAC credentials.
+
+### Install the CRDs and RBAC
+
+```bash
+kubectl apply -f operator/config/crd/
+kubectl apply -f operator/config/rbac/
+```
+
+### Deploy a hub
+
+```yaml
+apiVersion: scutum.io/v1alpha1
+kind: ScutumHub
+metadata:
+  name: hub
+  namespace: scutum
+spec:
+  image:
+    repository: ghcr.io/sovforge/scutum
+    tag: latest
+  adminSecret: scutum-admin-creds   # Secret with keys: username, password
+  storage:
+    size: 5Gi
+  wireGuard:
+    port: 51820
+```
+
+### Enroll an edge node
+
+```yaml
+apiVersion: scutum.io/v1alpha1
+kind: ScutumNode
+metadata:
+  name: edge-london
+  namespace: scutum
+spec:
+  hubRef:
+    name: hub
+    namespace: scutum
+  nodeName: edge-london
+  nodeType: remote
+  image:
+    repository: ghcr.io/sovforge/scutum
+    tag: latest
+```
+
+The operator reads hub credentials from the `ScutumHub`'s `adminSecret`, calls `GET /api/operator/bootstrap` to fetch mesh parameters, creates the node via the enrollment API, and writes a `<name>-bootstrap` Secret the edge pod mounts at startup.
+
+### Status fields
+
+Once reconciled, both resources expose status:
+
+```bash
+kubectl get scutumhub hub -n scutum -o wide
+kubectl get scutumnode edge-london -n scutum -o wide
+# PHASE column shows: Pending → Provisioning → Ready
+```
+
+---
+
 ## 🌐 Overview
 
 Scutum is a decentralized mesh controller designed to form a fully encrypted P2P mesh across your infrastructure. By eliminating SaaS control planes, relays, and telemetry, Scutum ensures that your network management remains private, secure, and entirely under your control.
@@ -452,7 +516,7 @@ All endpoints are served under `/api/`. Requests to authenticated routes require
 | :--- | :--- |
 | **Single Sign-On (OIDC / SAML)** — Keycloak, Okta, GitHub, Azure AD | 🔜 Planned |
 | **Helm chart** — first-class Kubernetes deployment | ✅ Shipped |
-| **Kubernetes operator** — CRD-based cluster management | 🔜 Planned |
+| **Kubernetes operator** — CRD-based cluster management | ✅ Shipped |
 
 Have a feature request? Open an issue or start a discussion.
 
