@@ -1,0 +1,104 @@
+name: Cut release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: minor
+        type: choice
+        options: [major, minor, patch]
+
+jobs:
+  release:
+    name: Bump version and tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push commit + tag
+
+    steps:
+      # Always release from develop — this job merges it into main.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: develop
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Compute next version ────────────────────────────────────────────────
+      - name: Compute next version
+        id: ver
+        run: |
+          # Latest semver tag, or v0.0.0 if the repo has no tags yet.
+          LAST=$(git tag --list 'v*.*.*' --sort=-version:refname | head -1)
+          LAST=${LAST:-v0.0.0}
+
+          MAJOR=$(echo "$LAST" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$LAST" | sed 's/^v//' | cut -d. -f2)
+          PATCH=$(echo "$LAST" | sed 's/^v//' | cut -d. -f3)
+
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "version=$VERSION"        >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION"           >> "$GITHUB_OUTPUT"
+          echo "Bumping $LAST → v$VERSION (${{ inputs.bump }})"
+
+      # ── Stamp CHANGELOG ─────────────────────────────────────────────────────
+      # Handles two heading formats that may appear in the file:
+      #   ## [Unreleased]
+      #   ## [X.Y.Z] — Unreleased
+      - name: Stamp CHANGELOG
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          DATE=$(date -u +"%Y-%m-%d")
+
+          # Replace the unreleased heading with the new versioned + dated heading.
+          sed -i \
+            -e "s|^## \[Unreleased\]|## [$VERSION] — $DATE|" \
+            -e "s|^## \[[0-9]*\.[0-9]*\.[0-9]*\] — Unreleased|## [$VERSION] — $DATE|" \
+            CHANGELOG.md
+
+          # Prepend a fresh [Unreleased] section above the newly versioned block
+          # so contributors can start adding entries immediately.
+          sed -i "0,/^## \[$VERSION\]/s|^## \[$VERSION\]|## [Unreleased]\n\n---\n\n## [$VERSION]|" \
+            CHANGELOG.md
+
+      # ── Update Helm chart ────────────────────────────────────────────────────
+      - name: Update Helm chart version
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          sed -i "s|^version:.*|version: $VERSION|"         helm/scutum/Chart.yaml
+          sed -i "s|^appVersion:.*|appVersion: \"$VERSION\"|" helm/scutum/Chart.yaml
+
+      # ── Commit version bump to develop ───────────────────────────────────────
+      - name: Commit version bump on develop
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add CHANGELOG.md helm/scutum/Chart.yaml
+          git commit -m "chore: release ${{ steps.ver.outputs.tag }}"
+          git push origin HEAD:develop
+
+      # ── Merge develop → main and tag ─────────────────────────────────────────
+      - name: Merge develop into main and push tag
+        run: |
+          git fetch origin main
+          git checkout -b release-merge origin/main
+          git merge --no-ff develop -m "chore: merge develop → main for ${{ steps.ver.outputs.tag }}"
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin HEAD:main
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Summary
+        run: |
+          echo "### Released ${{ steps.ver.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version bump committed to \`develop\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`develop\` merged into \`main\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag \`${{ steps.ver.outputs.tag }}\` pushed → **Release** workflow building now" >> "$GITHUB_STEP_SUMMARY"

@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-scutum
+/scutum
 tests.test
 
 # ── Test & coverage ──────────────────────────────────────────

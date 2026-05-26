@@ -23,6 +23,8 @@
 <summary><b>📖 Table of Contents</b> (click to expand)</summary>
 
 - [⚡ Quick Start](#the-2-node-quick-start-under-60-seconds)
+- [☸️ Kubernetes / Helm](#kubernetes--helm)
+- [⚙️ Kubernetes Operator](#kubernetes-operator)
 - [🌐 Overview](#overview)
 - [🧩 Core Concepts](#core-concepts)
 - [🏗️ Architecture](#architecture)
@@ -152,6 +154,156 @@ Within minutes, both nodes should appear connected in the UI and begin routing t
 
 * A private encrypted network between your machines — no exposed ports, no third-party control plane
 * Docker and Kubernetes actions from the hub UI forwarded to any registered node via `X-Target-Node` header
+
+---
+
+---
+
+## ☸️ Kubernetes / Helm
+
+Scutum ships a production-ready Helm chart (`helm/scutum`) that deploys as a **StatefulSet** with two services: a `ClusterIP` for the API/UI and a `LoadBalancer` for the WireGuard UDP port (so remote nodes can reach the mesh hub).
+
+### Prerequisites
+
+- Kubernetes 1.27+
+- Helm 3.10+
+- A LoadBalancer provider **or** use `service.wireguard.type: NodePort` for bare-metal
+
+### Quickstart
+
+```bash
+# 1. Install (self-signed TLS cert generated automatically on first start)
+helm install scutum ./helm/scutum \
+  --namespace scutum --create-namespace
+
+# 2. Get the API URL
+kubectl get svc scutum -n scutum
+
+# 3. Get the WireGuard endpoint (share with remote nodes)
+kubectl get svc scutum-wireguard -n scutum
+```
+
+Open `https://<LoadBalancer-IP>:8080` and complete the setup wizard.
+
+### Common value overrides
+
+```yaml
+# values-production.yaml
+
+# Use an existing PostgreSQL database (required for replica count > 1)
+database:
+  url: "postgres://scutum:password@postgres:5432/scutum"
+
+replicaCount: 3
+
+# Attach to a Gateway API gateway instead of using direct LoadBalancer
+gateway:
+  enabled: true
+  name: prod-gateway
+  hostnames:
+    - scutum.example.com
+
+# Enable Docker socket mount on nodes that run Docker (not containerd)
+docker:
+  enabled: true
+
+# Bring your own TLS certificate (e.g. from cert-manager)
+tls:
+  autoGenerate: false
+  existingSecret: scutum-tls  # kubernetes.io/tls secret
+```
+
+```bash
+helm upgrade --install scutum ./helm/scutum \
+  --namespace scutum --create-namespace \
+  -f values-production.yaml
+```
+
+### Notes
+
+| Concern | Detail |
+|---|---|
+| **WireGuard** | Requires `NET_ADMIN` capability and the kernel WireGuard module (built-in since kernel 5.6). The chart adds these automatically. |
+| **HA (replicas > 1)** | Requires an external database (`database.url`). SQLite is single-writer only. |
+| **Docker features** | Disabled by default. Set `docker.enabled: true` only on nodes where Docker (not containerd) is the runtime — the socket is mounted as a `hostPath`. |
+| **NAT roaming** | Edge nodes (e.g. laptops) re-register their WireGuard endpoint with the hub every 2 minutes, so the tunnel recovers automatically after a network change without a restart. |
+| **Hub-and-spoke routing** | For two edge nodes behind different NATs to reach each other, configure their WireGuard `AllowedIPs` to include the full mesh CIDR — traffic is relayed through the hub. |
+
+### Running the tests
+
+```bash
+# Helm render tests (no cluster required)
+./helm/scutum/tests/render_test.sh
+
+# Full integration test using kind
+./scripts/test-k8s.sh
+
+# Keep the cluster after the test for inspection
+./scripts/test-k8s.sh --keep
+```
+
+---
+
+## ⚙️ Kubernetes Operator
+
+The Scutum operator manages hub and edge deployments as first-class Kubernetes resources using two CRDs: `ScutumHub` and `ScutumNode`. The hub controller reconciles StatefulSets, Services, and RBAC; the node controller auto-enrolls edges into the mesh via the hub API and writes a per-node `bootstrap` Secret containing WireGuard config and HMAC credentials.
+
+### Install the CRDs and RBAC
+
+```bash
+kubectl apply -f operator/config/crd/
+kubectl apply -f operator/config/rbac/
+```
+
+### Deploy a hub
+
+```yaml
+apiVersion: scutum.io/v1alpha1
+kind: ScutumHub
+metadata:
+  name: hub
+  namespace: scutum
+spec:
+  image:
+    repository: ghcr.io/sovforge/scutum
+    tag: latest
+  adminSecret: scutum-admin-creds   # Secret with keys: username, password
+  storage:
+    size: 5Gi
+  wireGuard:
+    port: 51820
+```
+
+### Enroll an edge node
+
+```yaml
+apiVersion: scutum.io/v1alpha1
+kind: ScutumNode
+metadata:
+  name: edge-london
+  namespace: scutum
+spec:
+  hubRef:
+    name: hub
+    namespace: scutum
+  nodeName: edge-london
+  nodeType: remote
+  image:
+    repository: ghcr.io/sovforge/scutum
+    tag: latest
+```
+
+The operator reads hub credentials from the `ScutumHub`'s `adminSecret`, calls `GET /api/operator/bootstrap` to fetch mesh parameters, creates the node via the enrollment API, and writes a `<name>-bootstrap` Secret the edge pod mounts at startup.
+
+### Status fields
+
+Once reconciled, both resources expose status:
+
+```bash
+kubectl get scutumhub hub -n scutum -o wide
+kubectl get scutumnode edge-london -n scutum -o wide
+# PHASE column shows: Pending → Provisioning → Ready
+```
 
 ---
 
@@ -363,7 +515,8 @@ All endpoints are served under `/api/`. Requests to authenticated routes require
 | Feature | Status |
 | :--- | :--- |
 | **Single Sign-On (OIDC / SAML)** — Keycloak, Okta, GitHub, Azure AD | 🔜 Planned |
-| **Helm chart & Kubernetes operator** — first-class K8s deployment | 🔜 Planned |
+| **Helm chart** — first-class Kubernetes deployment | ✅ Shipped |
+| **Kubernetes operator** — CRD-based cluster management | ✅ Shipped |
 
 Have a feature request? Open an issue or start a discussion.
 

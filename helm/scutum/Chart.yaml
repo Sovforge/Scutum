@@ -1,0 +1,16 @@
+apiVersion: v2
+name: scutum
+description: Sovereign P2P infrastructure orchestration
+type: application
+version: 0.0.0
+appVersion: "0.0.0"
+keywords:
+  - orchestration
+  - wireguard
+  - p2p
+  - infrastructure
+home: https://github.com/sovforge/scutum
+sources:
+  - https://github.com/sovforge/scutum
+maintainers:
+  - name: SovForge
