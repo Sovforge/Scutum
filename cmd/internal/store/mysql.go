@@ -44,6 +44,7 @@ func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN trace_id VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN span_id VARCHAR(32) NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN attributes JSON`,
+		`ALTER TABLE users ADD COLUMN email VARCHAR(255)`,
 		// otel_metrics table (MySQL runs one statement at a time)
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
 			id         VARCHAR(255) PRIMARY KEY,
@@ -233,5 +234,16 @@ CREATE TABLE IF NOT EXISTS hub_leases (
     holder_id  VARCHAR(255) NOT NULL,
     expires_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sso_identities (
+    id         VARCHAR(255) PRIMARY KEY,
+    user_id    VARCHAR(255) NOT NULL,
+    provider   VARCHAR(100) NOT NULL,
+    subject    VARCHAR(255) NOT NULL,
+    email      VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(provider, subject),
+    CONSTRAINT fk_sso_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
 `

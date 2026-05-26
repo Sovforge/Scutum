@@ -159,6 +159,12 @@ export interface MetricPoint {
   labels?:  Record<string, string>
 }
 
+export interface SSOProvider {
+  id:   string
+  name: string
+  icon: string
+}
+
 export interface GitSyncRequest {
   repo_url:   string
   username?:  string
@@ -482,6 +488,14 @@ export function useApi() {
     return $fetch<{ recovery_codes: string[] }>(`${BASE}/auth/recovery-codes/regenerate`, { method: 'POST', headers: h() })
   }
 
+  async function getSSOProviders(): Promise<SSOProvider[]> {
+    try {
+      return await $fetch<SSOProvider[]>(`${BASE}/auth/sso/providers`)
+    } catch {
+      return []
+    }
+  }
+
   async function forgotPassword(payload: {
     username: string
     new_password: string
@@ -523,5 +537,6 @@ export function useApi() {
     gitSync,
     getRecoveryCodeStatus, regenerateRecoveryCodes, forgotPassword, auditExportUrl,
     exportDatabase,
+    getSSOProviders,
   }
 }
