@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [1.1.0] — Unreleased
+## [Unreleased]
 
 ### Added
 - **Helm chart** (`helm/scutum`): Production-ready Helm chart deploying Scutum as a StatefulSet with a `ClusterIP` service for the API/UI and a `LoadBalancer` service for the WireGuard UDP port. Includes: TLS init container (self-signed cert generation on first start), Gateway API `HTTPRoute` template, `ClusterRole`/`ClusterRoleBinding` for Kubernetes in-cluster access, PVC-backed storage for `/data` and `/secrets`, and `NET_ADMIN` capability wiring for WireGuard.
