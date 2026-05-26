@@ -1,0 +1,53 @@
+Scutum has been deployed.
+
+---
+Get the API URL:
+{{- if .Values.gateway.enabled }}
+{{- range .Values.gateway.hostnames }}
+  https://{{ . }}
+{{- end }}
+{{- else if eq .Values.service.api.type "LoadBalancer" }}
+  export LB=$(kubectl get svc {{ include "scutum.fullname" . }} -n {{ .Release.Namespace }} \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo "https://$LB:{{ .Values.service.api.port }}"
+{{- else if eq .Values.service.api.type "NodePort" }}
+  export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')
+  export NODE_PORT=$(kubectl get svc {{ include "scutum.fullname" . }} -n {{ .Release.Namespace }} \
+    -o jsonpath='{.spec.ports[0].nodePort}')
+  echo "https://$NODE_IP:$NODE_PORT"
+{{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "scutum.fullname" . }} 8080:{{ .Values.service.api.port }}
+  echo "https://localhost:8080"
+{{- end }}
+
+---
+{{- if .Values.wireguard.enabled }}
+WireGuard endpoint (remote nodes connect here):
+{{- if eq .Values.service.wireguard.type "LoadBalancer" }}
+  export WG_IP=$(kubectl get svc {{ include "scutum.fullname" . }}-wireguard -n {{ .Release.Namespace }} \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo "$WG_IP:{{ .Values.wireguard.port }}"
+{{- else }}
+  kubectl get svc {{ include "scutum.fullname" . }}-wireguard -n {{ .Release.Namespace }}
+{{- end }}
+{{- end }}
+
+---
+{{- if .Values.tls.autoGenerate }}
+TLS: A self-signed certificate is generated automatically on first start.
+     The certificate is stored in the 'secrets' PVC and reused across restarts.
+     For production, provide a proper cert via tls.existingSecret or cert-manager.
+{{- end }}
+
+{{- if .Values.docker.enabled }}
+
+WARNING: Docker socket mounting is enabled. This grants the pod root-equivalent
+         access to the host. Only use this on nodes where Docker is the container
+         runtime and you have reviewed the security implications.
+{{- end }}
+
+{{- if gt (int .Values.replicaCount) 1 }}
+
+NOTE: Multiple replicas require an external database (database.url).
+      SQLite does not support concurrent write access from multiple pods.
+{{- end }}

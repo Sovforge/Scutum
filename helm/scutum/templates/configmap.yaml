@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scutum.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scutum.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.config.port | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  AUDIT_ENABLED: {{ .Values.config.auditEnabled | quote }}
+  AUDIT_RETENTION_DAYS: {{ .Values.config.auditRetentionDays | quote }}
+  HEALER_INTERVAL: {{ .Values.config.healerInterval | quote }}
+  DATA_DIR: {{ .Values.config.dataDir | quote }}
+  SECRETS_DIR: {{ .Values.config.secretsDir | quote }}
+  CERT_FILE: {{ printf "%s/server.crt" .Values.config.secretsDir | quote }}
+  KEY_FILE: {{ printf "%s/server.key" .Values.config.secretsDir | quote }}
+  {{- if .Values.config.pluginsDir }}
+  PLUGINS_DIR: {{ .Values.config.pluginsDir | quote }}
+  {{- end }}

@@ -352,6 +352,24 @@ func main() {
 		return authMW(auth.Require(db, resource, action)(http.HandlerFunc(h)))
 	}
 
+	// requireDocker wraps require() and additionally checks that the Docker
+	// socket is present before the handler runs. Without this, missing-socket
+	// errors surface as confusing 500s instead of a clear feature-unavailable
+	// message — most relevant when running in Kubernetes without docker.enabled.
+	requireDocker := func(resource, action string, h http.HandlerFunc) http.Handler {
+		return require(resource, action, func(w http.ResponseWriter, r *http.Request) {
+			if !utils.IsDockerAvailable() {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Docker is not available on this node (socket not mounted)",
+				})
+				return
+			}
+			h(w, r)
+		})
+	}
+
 	// --- Handlers ---
 	dockerCtrl := handlers.NewDockerHandler(db)
 	kubernetesCtrl := handlers.NewKubernetesHandler(db)
@@ -440,19 +458,19 @@ func main() {
 	apiMux.Handle("DELETE /roles/{id}", require("admin", "admin", roleCtrl.HandleDelete))
 
 	// Docker
-	apiMux.Handle("GET /docker/containers", require("docker", "read", dockerCtrl.HandleListContainers))
-	apiMux.Handle("POST /docker/deploy", require("docker", "write", dockerCtrl.PostDeploy))
-	apiMux.Handle("POST /docker/deploy-compose", require("docker", "write", dockerCtrl.HandleDeployCompose))
-	apiMux.Handle("GET /docker/containers/{id}", require("docker", "read", dockerCtrl.HandleInspect))
-	apiMux.Handle("GET /docker/containers/{id}/logs-json", require("docker", "read", dockerCtrl.HandleLogsJSON))
-	apiMux.Handle("POST /docker/containers/{id}/start", require("docker", "write", dockerCtrl.HandleStart))
-	apiMux.Handle("POST /docker/containers/{id}/stop", require("docker", "write", dockerCtrl.HandleStop))
-	apiMux.Handle("POST /docker/containers/{id}/restart", require("docker", "write", dockerCtrl.HandleRestart))
-	apiMux.Handle("DELETE /docker/containers/{id}", require("docker", "delete", dockerCtrl.HandleDelete))
-	apiMux.Handle("GET /docker/containers/{id}/stats", require("docker", "read", dockerCtrl.HandleStats))
-	apiMux.Handle("GET /docker/containers/{id}/stats-snapshot", require("docker", "read", dockerCtrl.HandleStatsSnapshot))
-	apiMux.Handle("GET /docker/containers/{id}/logs", require("docker", "read", dockerCtrl.HandleLogs))
-	apiMux.Handle("GET /docker/containers/{id}/terminal", require("docker", "write", dockerCtrl.HandleTerminal))
+	apiMux.Handle("GET /docker/containers", requireDocker("docker", "read", dockerCtrl.HandleListContainers))
+	apiMux.Handle("POST /docker/deploy", requireDocker("docker", "write", dockerCtrl.PostDeploy))
+	apiMux.Handle("POST /docker/deploy-compose", requireDocker("docker", "write", dockerCtrl.HandleDeployCompose))
+	apiMux.Handle("GET /docker/containers/{id}", requireDocker("docker", "read", dockerCtrl.HandleInspect))
+	apiMux.Handle("GET /docker/containers/{id}/logs-json", requireDocker("docker", "read", dockerCtrl.HandleLogsJSON))
+	apiMux.Handle("POST /docker/containers/{id}/start", requireDocker("docker", "write", dockerCtrl.HandleStart))
+	apiMux.Handle("POST /docker/containers/{id}/stop", requireDocker("docker", "write", dockerCtrl.HandleStop))
+	apiMux.Handle("POST /docker/containers/{id}/restart", requireDocker("docker", "write", dockerCtrl.HandleRestart))
+	apiMux.Handle("DELETE /docker/containers/{id}", requireDocker("docker", "delete", dockerCtrl.HandleDelete))
+	apiMux.Handle("GET /docker/containers/{id}/stats", requireDocker("docker", "read", dockerCtrl.HandleStats))
+	apiMux.Handle("GET /docker/containers/{id}/stats-snapshot", requireDocker("docker", "read", dockerCtrl.HandleStatsSnapshot))
+	apiMux.Handle("GET /docker/containers/{id}/logs", requireDocker("docker", "read", dockerCtrl.HandleLogs))
+	apiMux.Handle("GET /docker/containers/{id}/terminal", requireDocker("docker", "write", dockerCtrl.HandleTerminal))
 
 	// Kubernetes
 	apiMux.Handle("GET /kubernetes/summary", require("kubernetes", "read", kubernetesCtrl.HandleK8sSummary))
@@ -511,8 +529,8 @@ func main() {
 	apiMux.Handle("POST /otlp/v1/metrics", require("admin", "read", otelCtrl.HandleOTLPMetrics))
 
 	// Container / pod telemetry scraping
-	apiMux.Handle("GET /docker/containers/{id}/traces", require("docker", "read", dockerCtrl.HandleContainerTraces))
-	apiMux.Handle("GET /docker/containers/{id}/metrics-scrape", require("docker", "read", dockerCtrl.HandleContainerMetricsScrape))
+	apiMux.Handle("GET /docker/containers/{id}/traces", requireDocker("docker", "read", dockerCtrl.HandleContainerTraces))
+	apiMux.Handle("GET /docker/containers/{id}/metrics-scrape", requireDocker("docker", "read", dockerCtrl.HandleContainerMetricsScrape))
 	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}/traces", require("kubernetes", "read", kubernetesCtrl.HandlePodTraces))
 	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}/metrics-scrape", require("kubernetes", "read", kubernetesCtrl.HandlePodMetricsScrape))
 
@@ -807,10 +825,17 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 	return nil
 }
 
-// registerOwnEndpoint is called on edge (remote/combined) nodes at startup to
-// push our current WireGuard listen port to the hub. The hub derives the full
-// endpoint as "observed-source-IP:listen_port" and updates its wg_peers table,
-// ensuring the tunnel reconnects even when our NAT mapping or IP has changed.
+// endpointRefreshInterval controls how often an edge node re-registers its
+// WireGuard endpoint with the hub. Keeping this short means the hub picks up
+// a new NAT mapping within one interval when the node changes networks (e.g.
+// laptop roaming between WiFi and mobile hotspot).
+const endpointRefreshInterval = 2 * time.Minute
+
+// registerOwnEndpoint runs on edge (remote/combined) nodes. It pushes the
+// node's current WireGuard listen port to the hub; the hub derives the full
+// endpoint as "observed-source-IP:listen_port" and stores it in wg_peers.
+// After the initial registration it loops, re-registering every
+// endpointRefreshInterval so the hub always has the current NAT mapping.
 func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Logger, tlsConfig *tls.Config) {
 	installType, err := db.GetInstallType(ctx)
 	if err != nil || (installType != store.InstallRemote && installType != store.InstallCombined) {
@@ -864,6 +889,7 @@ func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Log
 		return
 	}
 
+	// Initial registration with retry backoff.
 	for attempt := 1; attempt <= 5; attempt++ {
 		if err := callRegisterEndpoint(ctx, hubAPIBase, pubKey, listenPort, hmacKey, tlsConfig); err != nil {
 			logger.Warn("registerOwnEndpoint: attempt failed, retrying",
@@ -877,9 +903,26 @@ func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Log
 		}
 		logger.Info("registerOwnEndpoint: endpoint registered with hub",
 			"hub", hubAPIBase, "listen_port", listenPort)
-		return
+		break
 	}
-	logger.Error("registerOwnEndpoint: all attempts failed")
+
+	// Periodic re-registration: if the node changes networks (different NAT
+	// exit IP) the hub learns the new mapping on the next tick rather than
+	// waiting for a restart.
+	ticker := time.NewTicker(endpointRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := callRegisterEndpoint(ctx, hubAPIBase, pubKey, listenPort, hmacKey, tlsConfig); err != nil {
+				logger.Warn("registerOwnEndpoint: periodic refresh failed", "error", err)
+			} else {
+				logger.Debug("registerOwnEndpoint: endpoint refreshed", "hub", hubAPIBase)
+			}
+		}
+	}
 }
 
 // callRegisterEndpoint sends a signed POST to the hub's /api/network/register-endpoint.
