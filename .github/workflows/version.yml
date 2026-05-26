@@ -18,11 +18,11 @@ jobs:
       contents: write   # push commit + tag
 
     steps:
+      # Always release from develop — this job merges it into main.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Use a PAT when branch protection requires it; GITHUB_TOKEN works
-          # for repos without required status checks on main.
+          ref: develop
           token: ${{ secrets.GITHUB_TOKEN }}
 
       # ── Compute next version ────────────────────────────────────────────────
@@ -75,16 +75,23 @@ jobs:
           sed -i "s|^version:.*|version: $VERSION|"         helm/scutum/Chart.yaml
           sed -i "s|^appVersion:.*|appVersion: \"$VERSION\"|" helm/scutum/Chart.yaml
 
-      # ── Commit, tag, push ────────────────────────────────────────────────────
-      - name: Commit and push tag
+      # ── Commit version bump to develop ───────────────────────────────────────
+      - name: Commit version bump on develop
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add CHANGELOG.md helm/scutum/Chart.yaml
           git commit -m "chore: release ${{ steps.ver.outputs.tag }}"
-          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin HEAD:develop
 
+      # ── Merge develop → main and tag ─────────────────────────────────────────
+      - name: Merge develop into main and push tag
+        run: |
+          git fetch origin main
+          git checkout -b release-merge origin/main
+          git merge --no-ff develop -m "chore: merge develop → main for ${{ steps.ver.outputs.tag }}"
+          git tag "${{ steps.ver.outputs.tag }}"
           git push origin HEAD:main
           git push origin "${{ steps.ver.outputs.tag }}"
 
@@ -92,5 +99,6 @@ jobs:
         run: |
           echo "### Released ${{ steps.ver.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The \`${{ steps.ver.outputs.tag }}\` tag has been pushed." >> "$GITHUB_STEP_SUMMARY"
-          echo "The **Release** workflow is now building the Docker image and creating the GitHub release." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version bump committed to \`develop\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`develop\` merged into \`main\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag \`${{ steps.ver.outputs.tag }}\` pushed → **Release** workflow building now" >> "$GITHUB_STEP_SUMMARY"
