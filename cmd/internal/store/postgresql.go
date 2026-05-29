@@ -42,6 +42,8 @@ func (d PostgresDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS trace_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS span_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS attributes JSONB NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled INTEGER NOT NULL DEFAULT 0`,
 		// otel_metrics table
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
 			id         TEXT PRIMARY KEY,
@@ -223,5 +225,31 @@ CREATE TABLE IF NOT EXISTS hub_leases (
 	holder_id  TEXT NOT NULL,
 	expires_at TIMESTAMPTZ NOT NULL,
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS webhook_configs (
+	id         TEXT PRIMARY KEY,
+	name       TEXT NOT NULL,
+	url        TEXT NOT NULL,
+	secret     TEXT NOT NULL DEFAULT '',
+	events     TEXT NOT NULL DEFAULT '[]',
+	enabled    INTEGER NOT NULL DEFAULT 1,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scim_tokens (
+	id          TEXT PRIMARY KEY,
+	token_hash  TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS audit_forwarders (
+	id         TEXT PRIMARY KEY,
+	name       TEXT NOT NULL,
+	url        TEXT NOT NULL,
+	format     TEXT NOT NULL DEFAULT 'json',
+	enabled    INTEGER NOT NULL DEFAULT 1,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 `

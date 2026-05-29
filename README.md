@@ -34,6 +34,9 @@
 - [🚀 Getting Started](#getting-started)
   - [Running Outside Docker (Advanced)](#running-outside-docker-advanced)
 - [🛡️ The Scutum Advantage](#the-sovereign-advantage)
+- [🔔 Webhook Notifications](#webhook-notifications)
+- [🔗 SCIM 2.0 Provisioning](#scim-20-provisioning)
+- [📤 Audit Log Forwarding](#audit-log-forwarding)
 - [🔌 Plugin System](#plugin-system)
 - [📡 API Quick Reference](#api-quick-reference)
 - [🗺️ Roadmap](#roadmap)
@@ -467,6 +470,104 @@ Environment variables:
 | **Networking** | Public Relays / Exit Nodes | **Private P2P WireGuard Mesh** |
 | **Observability** | Third-party Ingestion | **Local OpenTelemetry Streams** |
 | **Dependency** | Internet Required | **Fully Air-Gap Capable** |
+
+---
+
+## 🔔 Webhook Notifications
+
+Scutum can POST a signed JSON payload to any HTTP endpoint when key mesh events occur.
+
+### Supported events
+
+| Event | Trigger |
+|---|---|
+| `node.enrolled` | A new node is approved and added to the mesh |
+| `node.offline` | The healer marks a node as unreachable |
+| `node.online` | A previously offline node recovers |
+| `healer.service_restart` | The healer restarts a failing service |
+| `audit.critical` | A critical-severity audit event is logged |
+| `user.created` | A new user account is created |
+| `auth.sso_login` | A user authenticates via SSO |
+
+### Payload format
+
+```json
+{
+  "type": "node.enrolled",
+  "timestamp": "2026-05-29T12:00:00Z",
+  "payload": { "node_id": "...", "name": "edge-london" }
+}
+```
+
+### Signature verification
+
+Every delivery includes `X-Scutum-Signature: sha256=<hex>` computed as HMAC-SHA256 of the raw body using the webhook secret. Verify it on your receiver to confirm authenticity.
+
+### Managing webhooks
+
+```bash
+# Create a webhook (subscribe to all node events)
+curl -X POST /api/webhooks \
+  -H "Authorization: Bearer <token>" \
+  -d '{"name":"Slack","url":"https://hooks.slack.com/...","secret":"s3cr3t","events":["node.enrolled","node.offline"]}'
+
+# Test delivery immediately
+curl -X POST /api/webhooks/<id>/test -H "Authorization: Bearer <token>"
+```
+
+---
+
+## 🔗 SCIM 2.0 Provisioning
+
+Scutum implements SCIM 2.0 (RFC 7644) at `/scim/v2/`, enabling automatic user provisioning and deprovisioning from any compatible IdP (Microsoft Entra ID, Okta, JumpCloud).
+
+### Generate a SCIM token
+
+```bash
+curl -X POST /api/scim/tokens \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -d '{"description":"Entra ID provisioning"}'
+# Returns: {"id":"...","token":"<raw-token>"}  ← copy the token, it won't be shown again
+```
+
+### Configure in Microsoft Entra ID
+
+1. Enterprise Applications → your app → **Provisioning** → **Automatic**
+2. **Tenant URL**: `https://scutum.example.com/scim/v2`
+3. **Secret token**: the token returned above
+4. Save and click **Test Connection**
+
+### Supported operations
+
+| Operation | Behaviour |
+|---|---|
+| Create user | New account created; random password set (SSO login recommended) |
+| Update user | Username and email updated |
+| Deactivate (`active: false`) | Account disabled — login rejected |
+| Delete user | Account permanently removed |
+
+---
+
+## 📤 Audit Log Forwarding
+
+Forward audit log entries to an external SIEM or log aggregator every 30 seconds.
+
+### Supported formats
+
+| Format | Use case |
+|---|---|
+| `json` | Generic — works with Elastic, Loki, Splunk HEC, any HTTP receiver |
+| `cef` | ArcSight CEF — compatible with IBM QRadar, HP ArcSight |
+
+### Configure a forwarder
+
+```bash
+curl -X POST /api/audit/forwarders \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -d '{"name":"Elastic","url":"https://elastic.example.com/scutum-audit","format":"json"}'
+```
+
+Scutum will POST a batch of up to 500 recent audit entries to the URL every 30 seconds. Toggle forwarders on/off with `PUT /api/audit/forwarders/{id}` setting `"enabled": false`.
 
 ---
 

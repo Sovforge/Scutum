@@ -32,6 +32,7 @@ import (
 
 	"scutum/cmd/internal/auth"
 	"scutum/cmd/internal/handlers"
+	"scutum/cmd/internal/webhooks"
 	"scutum/cmd/internal/kms"
 	"scutum/cmd/internal/metrics"
 	plugin "scutum/cmd/internal/plugins"
@@ -390,6 +391,12 @@ func main() {
 	otelCtrl := handlers.NewOTelHandler(db, db)
 	exportCtrl := handlers.NewExportHandler(db)
 	operatorCtrl := handlers.NewOperatorHandler(db)
+	webhookCtrl := handlers.NewWebhookHandler(db)
+	scimCtrl := handlers.NewSCIMHandler(db)
+	auditFwdCtrl := handlers.NewAuditForwarderHandler(db)
+	dispatcher := webhooks.NewDispatcher(db)
+	dispatcher.Start(ctx)
+	go handlers.RunForwarder(ctx, db)
 	utils.SetObsSink(db)
 	setupCtrl := handlers.NewSetupHandler(db, filepath.Join(secretsDir, "kms.toml"), func(newProvider kms.Provider) {
 		// All secrets written during setup (wg0_config, sync_hmac_key, hub_hmac_key,
@@ -543,6 +550,26 @@ func main() {
 	// Operator bootstrap (admin only — used by the Kubernetes operator)
 	apiMux.Handle("GET /operator/bootstrap", require("admin", "admin", operatorCtrl.HandleBootstrap))
 
+	// Webhooks (admin only)
+	apiMux.Handle("GET /webhooks", require("admin", "admin", webhookCtrl.HandleList))
+	apiMux.Handle("POST /webhooks", require("admin", "admin", webhookCtrl.HandleCreate))
+	apiMux.Handle("GET /webhooks/{id}", require("admin", "admin", webhookCtrl.HandleGet))
+	apiMux.Handle("PUT /webhooks/{id}", require("admin", "admin", webhookCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /webhooks/{id}", require("admin", "admin", webhookCtrl.HandleDelete))
+	apiMux.Handle("POST /webhooks/{id}/test", require("admin", "admin", webhookCtrl.HandleTest))
+
+	// Audit log forwarders (admin only)
+	apiMux.Handle("GET /audit/forwarders", require("admin", "admin", auditFwdCtrl.HandleList))
+	apiMux.Handle("POST /audit/forwarders", require("admin", "admin", auditFwdCtrl.HandleCreate))
+	apiMux.Handle("GET /audit/forwarders/{id}", require("admin", "admin", auditFwdCtrl.HandleGet))
+	apiMux.Handle("PUT /audit/forwarders/{id}", require("admin", "admin", auditFwdCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /audit/forwarders/{id}", require("admin", "admin", auditFwdCtrl.HandleDelete))
+
+	// SCIM token management (admin only, regular JWT auth)
+	apiMux.Handle("GET /scim/tokens", require("admin", "admin", scimCtrl.HandleListTokens))
+	apiMux.Handle("POST /scim/tokens", require("admin", "admin", scimCtrl.HandleCreateToken))
+	apiMux.Handle("DELETE /scim/tokens/{id}", require("admin", "admin", scimCtrl.HandleDeleteToken))
+
 	// Recovery (emergency key recovery)
 	recoveryCtrl := handlers.NewRecoveryHandler(db, kmsProvider)
 	apiMux.Handle("POST /recovery/generate-shares", require("admin", "admin", recoveryCtrl.HandleGenerateShares))
@@ -560,6 +587,17 @@ func main() {
 	// so the browser can load the login page before any credentials exist.
 	// We remove authMW from the global wrapper so that apiMux can manage its own public/private routes.
 	mainMux.Handle("/api/", http.StripPrefix("/api", metricsMiddleware(tracingMiddleware(logger, apiMux))))
+
+	// SCIM 2.0 — mounted at /scim/v2/ with its own token auth
+	scimMux := http.NewServeMux()
+	scimMux.HandleFunc("GET /ServiceProviderConfig", scimCtrl.HandleServiceProviderConfig)
+	scimMux.Handle("GET /Users", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleListUsers)))
+	scimMux.Handle("POST /Users", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleCreateUser)))
+	scimMux.Handle("GET /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleGetUser)))
+	scimMux.Handle("PUT /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleReplaceUser)))
+	scimMux.Handle("PATCH /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandlePatchUser)))
+	scimMux.Handle("DELETE /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleDeleteUser)))
+	mainMux.Handle("/scim/v2/", http.StripPrefix("/scim/v2", scimMux))
 
 	// Nuxt generates hashed filenames under /_nuxt/ so they can be cached forever.
 	sub, _ := fs.Sub(frontendFS, "dist")
@@ -653,6 +691,7 @@ func main() {
 	}
 	healer.Stop()
 	pusher.Stop()
+	dispatcher.Stop()
 	if err := db.Close(); err != nil {
 		logger.Error("db close error", "error", err)
 	}
