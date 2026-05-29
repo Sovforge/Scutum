@@ -17,11 +17,17 @@
           {{ section.label }}
         </button>
         <div class="settings-nav__divider" />
-        <NuxtLink to="/settings/rbac"    class="settings-nav__item">
+        <NuxtLink to="/settings/rbac"     class="settings-nav__item">
           <Icon name="lucide:shield" size="15" /> RBAC
         </NuxtLink>
-        <NuxtLink to="/settings/secrets" class="settings-nav__item">
+        <NuxtLink to="/settings/secrets"  class="settings-nav__item">
           <Icon name="lucide:key-round" size="15" /> Secrets / KMS
+        </NuxtLink>
+        <NuxtLink to="/settings/webhooks" class="settings-nav__item">
+          <Icon name="lucide:webhook" size="15" /> Webhooks
+        </NuxtLink>
+        <NuxtLink to="/settings/scim"     class="settings-nav__item">
+          <Icon name="lucide:users" size="15" /> SCIM
         </NuxtLink>
       </nav>
 
@@ -272,6 +278,56 @@
           </UiCard>
         </template>
 
+        <!-- Audit forwarding -->
+        <template v-if="activeSection === 'audit'">
+          <UiCard title="Audit Log Forwarders">
+            <div class="fwd-toolbar">
+              <button class="btn-sm-primary" @click="showFwdForm = true">
+                <Icon name="lucide:plus" size="13" /> Add forwarder
+              </button>
+            </div>
+            <div v-if="fwdLoading" class="loading-row">Loading…</div>
+            <div v-else-if="!forwarders.length" class="empty-row">No forwarders configured.</div>
+            <table v-else class="data-table mt-sm">
+              <thead><tr><th>Name</th><th>URL</th><th>Format</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                <tr v-for="f in forwarders" :key="f.id" class="data-table__row">
+                  <td class="fw-medium">{{ f.name }}</td>
+                  <td class="mono text-dim">{{ f.url }}</td>
+                  <td><UiBadge variant="info">{{ f.format }}</UiBadge></td>
+                  <td><UiBadge :variant="f.enabled ? 'success' : 'neutral'">{{ f.enabled ? 'Active' : 'Paused' }}</UiBadge></td>
+                  <td class="cell--actions">
+                    <button class="icon-btn" @click="toggleFwd(f)"><Icon :name="f.enabled ? 'lucide:pause' : 'lucide:play'" size="13" /></button>
+                    <template v-if="pendingFwdDelete === f.id">
+                      <span class="delete-confirm-label">Remove?</span>
+                      <button class="icon-btn" @click="pendingFwdDelete = null">Cancel</button>
+                      <button class="icon-btn icon-btn--danger" @click="deleteFwd(f.id)">Confirm</button>
+                    </template>
+                    <button v-else class="icon-btn icon-btn--danger" @click="pendingFwdDelete = f.id"><Icon name="lucide:trash-2" size="13" /></button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </UiCard>
+          <UiCard v-if="showFwdForm" title="New forwarder" class="mt">
+            <div class="form-grid">
+              <div class="form-row"><label class="form-label">Name</label><input v-model="fwdForm.name" class="form-input" /></div>
+              <div class="form-row"><label class="form-label">URL</label><input v-model="fwdForm.url" class="form-input font-mono" /></div>
+              <div class="form-row">
+                <label class="form-label">Format</label>
+                <select v-model="fwdForm.format" class="form-select">
+                  <option value="json">JSON</option>
+                  <option value="cef">CEF (ArcSight / QRadar)</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-actions mt-sm">
+              <button class="btn-sm-ghost" @click="showFwdForm = false">Cancel</button>
+              <button class="btn-sm-primary" @click="saveFwd">Save</button>
+            </div>
+          </UiCard>
+        </template>
+
         <!-- Save bar -->
         <div class="save-bar">
           <button class="save-btn">
@@ -307,14 +363,15 @@ async function exportDB() {
   }
 }
 
-type SectionId = 'general' | 'mesh' | 'nodes' | 'database' | 'auth'
+type SectionId = 'general' | 'mesh' | 'nodes' | 'database' | 'auth' | 'audit'
 
 const sections = [
-  { id: 'general'  as SectionId, icon: 'lucide:sliders-horizontal', label: 'General'  },
-  { id: 'mesh'     as SectionId, icon: 'lucide:network',            label: 'Mesh'     },
-  { id: 'nodes'    as SectionId, icon: 'lucide:server',             label: 'Nodes'    },
-  { id: 'database' as SectionId, icon: 'lucide:database',           label: 'Database' },
-  { id: 'auth'     as SectionId, icon: 'lucide:lock',               label: 'Auth'     },
+  { id: 'general'  as SectionId, icon: 'lucide:sliders-horizontal', label: 'General'   },
+  { id: 'mesh'     as SectionId, icon: 'lucide:network',            label: 'Mesh'      },
+  { id: 'nodes'    as SectionId, icon: 'lucide:server',             label: 'Nodes'     },
+  { id: 'database' as SectionId, icon: 'lucide:database',           label: 'Database'  },
+  { id: 'auth'     as SectionId, icon: 'lucide:lock',               label: 'Auth'      },
+  { id: 'audit'    as SectionId, icon: 'lucide:send',               label: 'Forwarding'},
 ]
 
 const activeSection = ref<SectionId>('general')
@@ -360,6 +417,40 @@ const auth = reactive({
   mfa: false,
   sessionTimeout: 60,
 })
+
+// ── Audit forwarders ────────────────────────────────────────────────────────
+const forwarders = ref<any[]>([])
+const fwdLoading = ref(false)
+const showFwdForm = ref(false)
+const pendingFwdDelete = ref<string | null>(null)
+const fwdForm = reactive({ name: '', url: '', format: 'json' })
+
+async function loadForwarders() {
+  fwdLoading.value = true
+  forwarders.value = await api.listAuditForwarders().catch(() => [])
+  fwdLoading.value = false
+}
+
+async function saveFwd() {
+  if (!fwdForm.name || !fwdForm.url) return
+  await api.createAuditForwarder({ ...fwdForm }).catch(() => {})
+  showFwdForm.value = false
+  Object.assign(fwdForm, { name: '', url: '', format: 'json' })
+  await loadForwarders()
+}
+
+async function toggleFwd(f: any) {
+  await api.updateAuditForwarder(f.id, { enabled: !f.enabled }).catch(() => {})
+  await loadForwarders()
+}
+
+async function deleteFwd(id: string) {
+  await api.deleteAuditForwarder(id).catch(() => {})
+  pendingFwdDelete.value = null
+  await loadForwarders()
+}
+
+watch(activeSection, (s) => { if (s === 'audit') loadForwarders() })
 </script>
 
 <style scoped>
@@ -637,4 +728,33 @@ const auth = reactive({
 .cell--mono   { font-family: monospace; font-size: 0.78rem; color: var(--text-tertiary); }
 .val-ok   { color: var(--success-light) !important; }
 .val-warn { color: var(--warning) !important; }
+
+/* ── Audit forwarders ────────────────────────────────────────────────────── */
+.fwd-toolbar { display: flex; justify-content: flex-end; margin-bottom: 0.75rem; }
+.btn-sm-primary {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  background: var(--accent); color: #fff; border: none; border-radius: 0.3rem;
+  padding: 0.375rem 0.75rem; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+}
+.btn-sm-primary:hover { background: var(--accent-hover); }
+.btn-sm-ghost {
+  background: none; border: 1px solid var(--border-strong); color: var(--text-muted);
+  border-radius: 0.3rem; padding: 0.375rem 0.75rem; font-size: 0.78rem; cursor: pointer;
+}
+.loading-row, .empty-row { padding: 1.5rem; text-align: center; color: var(--text-dim); font-size: 0.82rem; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.data-table th { text-align: left; padding: 0.5rem 0.75rem; color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); }
+.data-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border-subtle, var(--border)); }
+.data-table__row:last-child td { border-bottom: none; }
+.cell--actions { display: flex; align-items: center; gap: 0.25rem; justify-content: flex-end; }
+.icon-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 0.25rem; border-radius: 0.25rem; display: inline-flex; align-items: center; }
+.icon-btn:hover { background: var(--hover-bg); color: var(--text-primary); }
+.icon-btn--danger:hover { color: var(--danger-lighter); background: var(--danger-bg); }
+.delete-confirm-label { font-size: 0.75rem; color: var(--text-dim); margin-right: 0.25rem; }
+.fw-medium { font-weight: 500; }
+.mono { font-family: monospace; font-size: 0.78rem; }
+.text-dim { color: var(--text-dim); }
+.mt { margin-top: 1rem; }
+.mt-sm { margin-top: 0.5rem; }
+.form-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 </style>

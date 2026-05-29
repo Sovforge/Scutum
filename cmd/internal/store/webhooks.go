@@ -8,13 +8,13 @@ import (
 )
 
 type WebhookConfig struct {
-	ID        string
-	Name      string
-	URL       string
-	Secret    string
-	Events    []string
-	Enabled   bool
-	CreatedAt time.Time
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	Secret    string    `json:"secret,omitempty"`
+	Events    []string  `json:"events"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (s *Store) CreateWebhook(ctx context.Context, id, name, url, secret string, events []string) error {

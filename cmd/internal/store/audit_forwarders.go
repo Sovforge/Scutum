@@ -7,12 +7,12 @@ import (
 )
 
 type AuditForwarder struct {
-	ID        string
-	Name      string
-	URL       string
-	Format    string // "json" or "cef"
-	Enabled   bool
-	CreatedAt time.Time
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	Format    string    `json:"format"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (s *Store) CreateAuditForwarder(ctx context.Context, id, name, url, format string) error {
