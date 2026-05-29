@@ -550,6 +550,10 @@ func main() {
 	apiMux.Handle("POST /recovery/recover", require("admin", "admin", recoveryCtrl.HandleRecover))
 	apiMux.Handle("POST /recovery/reissue-shares", require("admin", "admin", recoveryCtrl.HandleReissueShares))
 
+	// System info (public)
+	systemCtrl := handlers.NewSystemHandler()
+	apiMux.Handle("GET /system/tls-mode", http.HandlerFunc(systemCtrl.HandleTLSMode))
+
 	// API docs (public)
 	docsCtrl := handlers.NewDocsHandler(openAPISpec)
 	apiMux.HandleFunc("GET /openapi.yaml", docsCtrl.HandleSpec)
