@@ -234,4 +234,37 @@ CREATE TABLE IF NOT EXISTS hub_leases (
     expires_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS federation_peers (
+    id            VARCHAR(36) PRIMARY KEY,
+    name          VARCHAR(255) NOT NULL,
+    hub_url       TEXT NOT NULL,
+    wg_endpoint   VARCHAR(255) NOT NULL,
+    wg_public_key VARCHAR(255) NOT NULL,
+    mesh_cidr     VARCHAR(64) NOT NULL,
+    allowed_ips   TEXT NOT NULL DEFAULT '',
+    status        VARCHAR(32) NOT NULL DEFAULT 'pending',
+    last_seen     TIMESTAMP NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS node_labels (
+    node_id   VARCHAR(36) NOT NULL,
+    label_key VARCHAR(255) NOT NULL,
+    value     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (node_id, label_key)
+);
+
+CREATE TABLE IF NOT EXISTS node_groups (
+    id          VARCHAR(36) PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS node_group_members (
+    group_id VARCHAR(36) NOT NULL,
+    node_id  VARCHAR(36) NOT NULL,
+    PRIMARY KEY (group_id, node_id)
+);
 `

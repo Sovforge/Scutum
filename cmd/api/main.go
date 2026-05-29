@@ -390,6 +390,9 @@ func main() {
 	otelCtrl := handlers.NewOTelHandler(db, db)
 	exportCtrl := handlers.NewExportHandler(db)
 	operatorCtrl := handlers.NewOperatorHandler(db)
+	federationCtrl := handlers.NewFederationHandler(db)
+	nodeGroupsCtrl := handlers.NewNodeGroupsHandler(db)
+	complianceCtrl := handlers.NewComplianceHandler(db, "1.1.0")
 	utils.SetObsSink(db)
 	setupCtrl := handlers.NewSetupHandler(db, filepath.Join(secretsDir, "kms.toml"), func(newProvider kms.Provider) {
 		// All secrets written during setup (wg0_config, sync_hmac_key, hub_hmac_key,
@@ -542,6 +545,27 @@ func main() {
 
 	// Operator bootstrap (admin only — used by the Kubernetes operator)
 	apiMux.Handle("GET /operator/bootstrap", require("admin", "admin", operatorCtrl.HandleBootstrap))
+
+	// Hub federation (admin only)
+	apiMux.Handle("GET /federation/peers", require("admin", "admin", federationCtrl.HandleList))
+	apiMux.Handle("POST /federation/peers", require("admin", "admin", federationCtrl.HandleCreate))
+	apiMux.Handle("GET /federation/peers/{id}", require("admin", "admin", federationCtrl.HandleGet))
+	apiMux.Handle("DELETE /federation/peers/{id}", require("admin", "admin", federationCtrl.HandleDelete))
+
+	// Node groups and labels
+	apiMux.Handle("GET /nodes/{id}/labels", require("nodes", "read", nodeGroupsCtrl.HandleGetLabels))
+	apiMux.Handle("PUT /nodes/{id}/labels", require("nodes", "write", nodeGroupsCtrl.HandleSetLabels))
+	apiMux.Handle("GET /groups", require("nodes", "read", nodeGroupsCtrl.HandleListGroups))
+	apiMux.Handle("POST /groups", require("nodes", "write", nodeGroupsCtrl.HandleCreateGroup))
+	apiMux.Handle("GET /groups/{id}", require("nodes", "read", nodeGroupsCtrl.HandleGetGroup))
+	apiMux.Handle("PUT /groups/{id}", require("nodes", "write", nodeGroupsCtrl.HandleUpdateGroup))
+	apiMux.Handle("DELETE /groups/{id}", require("nodes", "write", nodeGroupsCtrl.HandleDeleteGroup))
+	apiMux.Handle("GET /groups/{id}/nodes", require("nodes", "read", nodeGroupsCtrl.HandleListGroupNodes))
+	apiMux.Handle("POST /groups/{id}/members", require("nodes", "write", nodeGroupsCtrl.HandleAddMember))
+	apiMux.Handle("DELETE /groups/{id}/members/{nodeId}", require("nodes", "write", nodeGroupsCtrl.HandleRemoveMember))
+
+	// CRA compliance report (admin only)
+	apiMux.Handle("GET /compliance/report", require("admin", "admin", complianceCtrl.HandleReport))
 
 	// Recovery (emergency key recovery)
 	recoveryCtrl := handlers.NewRecoveryHandler(db, kmsProvider)
