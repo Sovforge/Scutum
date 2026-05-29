@@ -497,6 +497,57 @@ export function useApi() {
     return `${BASE}/audit/logs/export?format=${format}&limit=${limit}&token=${encodeURIComponent(token)}`
   }
 
+  // ── Federation ────────────────────────────────────────────────────────────
+  async function listFederationPeers() {
+    return $fetch<any[]>(`${BASE}/federation/peers`, { headers: h() })
+  }
+  async function createFederationPeer(data: any) {
+    return $fetch<any>(`${BASE}/federation/peers`, { method: 'POST', body: data, headers: h() })
+  }
+  async function deleteFederationPeer(id: string) {
+    await $fetch(`${BASE}/federation/peers/${id}`, { method: 'DELETE', headers: h() })
+  }
+
+  // ── Node groups ────────────────────────────────────────────────────────────
+  async function listNodeGroups() {
+    return $fetch<any[]>(`${BASE}/groups`, { headers: h() })
+  }
+  async function createNodeGroup(data: any) {
+    return $fetch<any>(`${BASE}/groups`, { method: 'POST', body: data, headers: h() })
+  }
+  async function deleteNodeGroup(id: string) {
+    await $fetch(`${BASE}/groups/${id}`, { method: 'DELETE', headers: h() })
+  }
+  async function getGroupNodes(groupId: string) {
+    return $fetch<any[]>(`${BASE}/groups/${groupId}/nodes`, { headers: h() })
+  }
+  async function addNodeToGroup(groupId: string, nodeId: string) {
+    await $fetch(`${BASE}/groups/${groupId}/members`, { method: 'POST', body: { node_id: nodeId }, headers: h() })
+  }
+  async function removeNodeFromGroup(groupId: string, nodeId: string) {
+    await $fetch(`${BASE}/groups/${groupId}/members/${nodeId}`, { method: 'DELETE', headers: h() })
+  }
+  async function getNodeLabels(nodeId: string) {
+    return $fetch<Record<string, string>>(`${BASE}/nodes/${nodeId}/labels`, { headers: h() })
+  }
+  async function setNodeLabels(nodeId: string, labels: Record<string, string>) {
+    return $fetch<Record<string, string>>(`${BASE}/nodes/${nodeId}/labels`, { method: 'PUT', body: labels, headers: h() })
+  }
+
+  // ── Compliance report ──────────────────────────────────────────────────────
+  async function downloadComplianceReport(format: 'json' | 'csv' | 'text') {
+    const res = await fetch(`${BASE}/compliance/report?format=${format}`, { headers: h() })
+    if (!res.ok) return
+    const blob = await res.blob()
+    const ext = format === 'json' ? 'json' : format === 'csv' ? 'csv' : 'txt'
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cra-compliance-report.${ext}`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // ── Database export ────────────────────────────────────────────────────────
   async function exportDatabase(): Promise<Blob> {
     const res = await fetch(`${BASE}/admin/export`, { headers: h() })
@@ -523,5 +574,9 @@ export function useApi() {
     gitSync,
     getRecoveryCodeStatus, regenerateRecoveryCodes, forgotPassword, auditExportUrl,
     exportDatabase,
+    listFederationPeers, createFederationPeer, deleteFederationPeer,
+    listNodeGroups, createNodeGroup, deleteNodeGroup, getGroupNodes, addNodeToGroup, removeNodeFromGroup,
+    getNodeLabels, setNodeLabels,
+    downloadComplianceReport,
   }
 }
