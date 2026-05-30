@@ -44,6 +44,7 @@ func (d PostgresDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS attributes JSONB NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`,
 		// otel_metrics table
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
 			id         TEXT PRIMARY KEY,
@@ -251,5 +252,13 @@ CREATE TABLE IF NOT EXISTS audit_forwarders (
 	format     TEXT NOT NULL DEFAULT 'json',
 	enabled    INTEGER NOT NULL DEFAULT 1,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS sso_identities (
+	id         TEXT PRIMARY KEY,
+	user_id    TEXT NOT NULL REFERENCES users(id),
+	provider   TEXT NOT NULL,
+	subject    TEXT NOT NULL,
+	email      TEXT,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	UNIQUE(provider, subject)
 );
 `

@@ -437,6 +437,12 @@ func main() {
 	apiMux.Handle("POST /auth/mfa/enable", authMW(http.HandlerFunc(authCtrl.HandleMFAEnable)))
 	apiMux.Handle("POST /auth/mfa/disable", authMW(http.HandlerFunc(authCtrl.HandleMFADisable)))
 
+	// SSO (public)
+	ssoCtrl := handlers.NewSSOHandler(db, jwtSecret)
+	apiMux.Handle("GET /auth/sso/providers", http.HandlerFunc(ssoCtrl.HandleProviders))
+	apiMux.Handle("GET /auth/sso/{provider}", http.HandlerFunc(ssoCtrl.HandleLogin))
+	apiMux.Handle("GET /auth/sso/{provider}/callback", http.HandlerFunc(ssoCtrl.HandleCallback))
+
 	// Health + version (public)
 	apiMux.HandleFunc("GET /health", handlers.HealthHandler)
 	apiMux.HandleFunc("GET /version", handlers.VersionHandler)

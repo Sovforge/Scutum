@@ -37,6 +37,7 @@
 - [🔔 Webhook Notifications](#webhook-notifications)
 - [🔗 SCIM 2.0 Provisioning](#scim-20-provisioning)
 - [📤 Audit Log Forwarding](#audit-log-forwarding)
+- [🔐 Single Sign-On (SSO)](#single-sign-on-sso)
 - [🔌 Plugin System](#plugin-system)
 - [📡 API Quick Reference](#api-quick-reference)
 - [🗺️ Roadmap](#roadmap)
@@ -584,6 +585,49 @@ curl -X POST /api/audit/forwarders \
 ```
 
 Scutum will POST a batch of up to 500 recent audit entries to the URL every 30 seconds. Toggle forwarders on/off with `PUT /api/audit/forwarders/{id}` setting `"enabled": false`.
+## 🔐 Single Sign-On (SSO)
+
+Scutum supports OIDC/OAuth2 login via external identity providers. Providers only appear on the login page when they are configured — unconfigured providers are invisible to users.
+
+### Supported providers
+
+| Provider | Protocol | Environment variables |
+|---|---|---|
+| **Microsoft Entra ID** (Azure AD / Office 365) | OIDC | `SSO_MICROSOFT_CLIENT_ID`, `SSO_MICROSOFT_CLIENT_SECRET`, `SSO_MICROSOFT_TENANT_ID` |
+| **GitHub** | OAuth2 | `SSO_GITHUB_CLIENT_ID`, `SSO_GITHUB_CLIENT_SECRET` |
+| **Authentik** | OIDC | `SSO_AUTHENTIK_CLIENT_ID`, `SSO_AUTHENTIK_CLIENT_SECRET`, `SSO_AUTHENTIK_ISSUER_URL` |
+| **Keycloak** | OIDC | `SSO_KEYCLOAK_CLIENT_ID`, `SSO_KEYCLOAK_CLIENT_SECRET`, `SSO_KEYCLOAK_ISSUER_URL` |
+| **Generic OIDC** | OIDC | `SSO_OIDC_CLIENT_ID`, `SSO_OIDC_CLIENT_SECRET`, `SSO_OIDC_ISSUER_URL`, `SSO_OIDC_NAME` |
+
+### Setup example — Microsoft Entra ID
+
+1. Register an app in [Azure Portal](https://portal.azure.com) → **App registrations → New registration**
+2. Set redirect URI to `https://<your-scutum-host>/api/auth/sso/microsoft/callback`
+3. Create a client secret under **Certificates & secrets**
+4. Set environment variables:
+
+```bash
+SSO_MICROSOFT_CLIENT_ID=<Application (client) ID>
+SSO_MICROSOFT_CLIENT_SECRET=<client secret value>
+SSO_MICROSOFT_TENANT_ID=<Directory (tenant) ID>   # or "common" for any Microsoft account
+SSO_REDIRECT_BASE_URL=https://scutum.example.com
+```
+
+### Setup example — GitHub
+
+1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
+2. Set **Authorization callback URL** to `https://<your-scutum-host>/api/auth/sso/github/callback`
+3. Set environment variables:
+
+```bash
+SSO_GITHUB_CLIENT_ID=<Client ID>
+SSO_GITHUB_CLIENT_SECRET=<Client secret>
+SSO_REDIRECT_BASE_URL=https://scutum.example.com
+```
+
+### Account linking
+
+On first SSO login, Scutum links the identity to an existing local account by email, or creates a new account automatically. Subsequent logins use the provider's subject ID for fast lookup.
 
 ---
 
@@ -631,7 +675,7 @@ All endpoints are served under `/api/`. Requests to authenticated routes require
 
 | Feature | Status |
 | :--- | :--- |
-| **Single Sign-On (OIDC / SAML)** — Keycloak, Okta, GitHub, Azure AD | 🔜 Planned |
+| **Single Sign-On (OIDC)** — Microsoft, GitHub, Authentik, Keycloak | ✅ Shipped |
 | **Helm chart** — first-class Kubernetes deployment | ✅ Shipped |
 | **Kubernetes operator** — CRD-based cluster management | ✅ Shipped |
 

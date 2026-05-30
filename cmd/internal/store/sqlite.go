@@ -48,6 +48,7 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN attributes TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN email TEXT`,
 	} {
 		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
 	}
@@ -281,6 +282,14 @@ CREATE TABLE IF NOT EXISTS nodes (
 		format     TEXT NOT NULL DEFAULT 'json',
 		enabled    INTEGER NOT NULL DEFAULT 1,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	CREATE TABLE IF NOT EXISTS sso_identities (
+		id         TEXT PRIMARY KEY,
+		user_id    TEXT NOT NULL REFERENCES users(id),
+		provider   TEXT NOT NULL,
+		subject    TEXT NOT NULL,
+		email      TEXT,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(provider, subject)
 	);
 
 	PRAGMA journal_mode=WAL;
