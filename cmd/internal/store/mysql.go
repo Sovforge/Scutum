@@ -44,6 +44,8 @@ func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN trace_id VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN span_id VARCHAR(32) NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN attributes JSON`,
+		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN disabled TINYINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN email VARCHAR(255)`,
 		// otel_metrics table (MySQL runs one statement at a time)
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
@@ -236,6 +238,30 @@ CREATE TABLE IF NOT EXISTS hub_leases (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS webhook_configs (
+    id         VARCHAR(36) PRIMARY KEY,
+    name       VARCHAR(255) NOT NULL,
+    url        TEXT NOT NULL,
+    secret     TEXT NOT NULL DEFAULT '',
+    events     TEXT NOT NULL DEFAULT '[]',
+    enabled    TINYINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scim_tokens (
+    id          VARCHAR(36) PRIMARY KEY,
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS audit_forwarders (
+    id         VARCHAR(36) PRIMARY KEY,
+    name       VARCHAR(255) NOT NULL,
+    url        TEXT NOT NULL,
+    format     VARCHAR(16) NOT NULL DEFAULT 'json',
+    enabled    TINYINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 CREATE TABLE IF NOT EXISTS sso_identities (
     id         VARCHAR(255) PRIMARY KEY,
     user_id    VARCHAR(255) NOT NULL,
