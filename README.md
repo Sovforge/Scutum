@@ -37,6 +37,10 @@
 - [🔗 Hub Federation](#hub-federation)
 - [🏷️ Node Groups and Labels](#node-groups-and-labels)
 - [📋 CRA Compliance Report](#cra-compliance-report)
+- [🔔 Webhook Notifications](#webhook-notifications)
+- [🔗 SCIM 2.0 Provisioning](#scim-20-provisioning)
+- [📤 Audit Log Forwarding](#audit-log-forwarding)
+- [🔐 Single Sign-On (SSO)](#single-sign-on-sso)
 - [🔌 Plugin System](#plugin-system)
 - [📡 API Quick Reference](#api-quick-reference)
 - [🗺️ Roadmap](#roadmap)
@@ -557,6 +561,144 @@ The report covers:
 | **Security** | Encryption algorithms, auth methods, rate limiting status, audit retention |
 | **Key management** | Hub HMAC key and WireGuard config presence |
 | **Incidents** | All failed/denied audit events with actor, IP, and path |
+## 🔔 Webhook Notifications
+
+Scutum can POST a signed JSON payload to any HTTP endpoint when key mesh events occur.
+
+### Supported events
+
+| Event | Trigger |
+|---|---|
+| `node.enrolled` | A new node is approved and added to the mesh |
+| `node.offline` | The healer marks a node as unreachable |
+| `node.online` | A previously offline node recovers |
+| `healer.service_restart` | The healer restarts a failing service |
+| `audit.critical` | A critical-severity audit event is logged |
+| `user.created` | A new user account is created |
+| `auth.sso_login` | A user authenticates via SSO |
+
+### Payload format
+
+```json
+{
+  "type": "node.enrolled",
+  "timestamp": "2026-05-29T12:00:00Z",
+  "payload": { "node_id": "...", "name": "edge-london" }
+}
+```
+
+### Signature verification
+
+Every delivery includes `X-Scutum-Signature: sha256=<hex>` computed as HMAC-SHA256 of the raw body using the webhook secret. Verify it on your receiver to confirm authenticity.
+
+### Managing webhooks
+
+```bash
+# Create a webhook (subscribe to all node events)
+curl -X POST /api/webhooks \
+  -H "Authorization: Bearer <token>" \
+  -d '{"name":"Slack","url":"https://hooks.slack.com/...","secret":"s3cr3t","events":["node.enrolled","node.offline"]}'
+
+# Test delivery immediately
+curl -X POST /api/webhooks/<id>/test -H "Authorization: Bearer <token>"
+```
+
+---
+
+## 🔗 SCIM 2.0 Provisioning
+
+Scutum implements SCIM 2.0 (RFC 7644) at `/scim/v2/`, enabling automatic user provisioning and deprovisioning from any compatible IdP (Microsoft Entra ID, Okta, JumpCloud).
+
+### Generate a SCIM token
+
+```bash
+curl -X POST /api/scim/tokens \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -d '{"description":"Entra ID provisioning"}'
+# Returns: {"id":"...","token":"<raw-token>"}  ← copy the token, it won't be shown again
+```
+
+### Configure in Microsoft Entra ID
+
+1. Enterprise Applications → your app → **Provisioning** → **Automatic**
+2. **Tenant URL**: `https://scutum.example.com/scim/v2`
+3. **Secret token**: the token returned above
+4. Save and click **Test Connection**
+
+### Supported operations
+
+| Operation | Behaviour |
+|---|---|
+| Create user | New account created; random password set (SSO login recommended) |
+| Update user | Username and email updated |
+| Deactivate (`active: false`) | Account disabled — login rejected |
+| Delete user | Account permanently removed |
+
+---
+
+## 📤 Audit Log Forwarding
+
+Forward audit log entries to an external SIEM or log aggregator every 30 seconds.
+
+### Supported formats
+
+| Format | Use case |
+|---|---|
+| `json` | Generic — works with Elastic, Loki, Splunk HEC, any HTTP receiver |
+| `cef` | ArcSight CEF — compatible with IBM QRadar, HP ArcSight |
+
+### Configure a forwarder
+
+```bash
+curl -X POST /api/audit/forwarders \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -d '{"name":"Elastic","url":"https://elastic.example.com/scutum-audit","format":"json"}'
+```
+
+Scutum will POST a batch of up to 500 recent audit entries to the URL every 30 seconds. Toggle forwarders on/off with `PUT /api/audit/forwarders/{id}` setting `"enabled": false`.
+## 🔐 Single Sign-On (SSO)
+
+Scutum supports OIDC/OAuth2 login via external identity providers. Providers only appear on the login page when they are configured — unconfigured providers are invisible to users.
+
+### Supported providers
+
+| Provider | Protocol | Environment variables |
+|---|---|---|
+| **Microsoft Entra ID** (Azure AD / Office 365) | OIDC | `SSO_MICROSOFT_CLIENT_ID`, `SSO_MICROSOFT_CLIENT_SECRET`, `SSO_MICROSOFT_TENANT_ID` |
+| **GitHub** | OAuth2 | `SSO_GITHUB_CLIENT_ID`, `SSO_GITHUB_CLIENT_SECRET` |
+| **Authentik** | OIDC | `SSO_AUTHENTIK_CLIENT_ID`, `SSO_AUTHENTIK_CLIENT_SECRET`, `SSO_AUTHENTIK_ISSUER_URL` |
+| **Keycloak** | OIDC | `SSO_KEYCLOAK_CLIENT_ID`, `SSO_KEYCLOAK_CLIENT_SECRET`, `SSO_KEYCLOAK_ISSUER_URL` |
+| **Generic OIDC** | OIDC | `SSO_OIDC_CLIENT_ID`, `SSO_OIDC_CLIENT_SECRET`, `SSO_OIDC_ISSUER_URL`, `SSO_OIDC_NAME` |
+
+### Setup example — Microsoft Entra ID
+
+1. Register an app in [Azure Portal](https://portal.azure.com) → **App registrations → New registration**
+2. Set redirect URI to `https://<your-scutum-host>/api/auth/sso/microsoft/callback`
+3. Create a client secret under **Certificates & secrets**
+4. Set environment variables:
+
+```bash
+SSO_MICROSOFT_CLIENT_ID=<Application (client) ID>
+SSO_MICROSOFT_CLIENT_SECRET=<client secret value>
+SSO_MICROSOFT_TENANT_ID=<Directory (tenant) ID>   # or "common" for any Microsoft account
+SSO_REDIRECT_BASE_URL=https://scutum.example.com
+```
+
+### Setup example — GitHub
+
+1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
+2. Set **Authorization callback URL** to `https://<your-scutum-host>/api/auth/sso/github/callback`
+3. Set environment variables:
+
+```bash
+SSO_GITHUB_CLIENT_ID=<Client ID>
+SSO_GITHUB_CLIENT_SECRET=<Client secret>
+SSO_REDIRECT_BASE_URL=https://scutum.example.com
+```
+
+### Account linking
+
+On first SSO login, Scutum links the identity to an existing local account by email, or creates a new account automatically. Subsequent logins use the provider's subject ID for fast lookup.
 
 ---
 
@@ -604,7 +746,7 @@ All endpoints are served under `/api/`. Requests to authenticated routes require
 
 | Feature | Status |
 | :--- | :--- |
-| **Single Sign-On (OIDC / SAML)** — Keycloak, Okta, GitHub, Azure AD | 🔜 Planned |
+| **Single Sign-On (OIDC)** — Microsoft, GitHub, Authentik, Keycloak | ✅ Shipped |
 | **Helm chart** — first-class Kubernetes deployment | ✅ Shipped |
 | **Kubernetes operator** — CRD-based cluster management | ✅ Shipped |
 

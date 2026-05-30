@@ -159,6 +159,12 @@ export interface MetricPoint {
   labels?:  Record<string, string>
 }
 
+export interface SSOProvider {
+  id:   string
+  name: string
+  icon: string
+}
+
 export interface GitSyncRequest {
   repo_url:   string
   username?:  string
@@ -482,6 +488,14 @@ export function useApi() {
     return $fetch<{ recovery_codes: string[] }>(`${BASE}/auth/recovery-codes/regenerate`, { method: 'POST', headers: h() })
   }
 
+  async function getSSOProviders(): Promise<SSOProvider[]> {
+    try {
+      return await $fetch<SSOProvider[]>(`${BASE}/auth/sso/providers`)
+    } catch {
+      return []
+    }
+  }
+
   async function forgotPassword(payload: {
     username: string
     new_password: string
@@ -546,6 +560,46 @@ export function useApi() {
     a.download = `cra-compliance-report.${ext}`
     a.click()
     URL.revokeObjectURL(url)
+  // ── Webhooks ───────────────────────────────────────────────────────────────
+  async function listWebhooks() {
+    return $fetch<any[]>(`${BASE}/webhooks`, { headers: h() })
+  }
+  async function createWebhook(data: any) {
+    return $fetch<any>(`${BASE}/webhooks`, { method: 'POST', body: data, headers: h() })
+  }
+  async function updateWebhook(id: string, data: any) {
+    return $fetch<any>(`${BASE}/webhooks/${id}`, { method: 'PUT', body: data, headers: h() })
+  }
+  async function deleteWebhook(id: string) {
+    await $fetch(`${BASE}/webhooks/${id}`, { method: 'DELETE', headers: h() })
+  }
+  async function testWebhook(id: string) {
+    await $fetch(`${BASE}/webhooks/${id}/test`, { method: 'POST', headers: h() })
+  }
+
+  // ── SCIM tokens ────────────────────────────────────────────────────────────
+  async function listSCIMTokens() {
+    return $fetch<any[]>(`${BASE}/scim/tokens`, { headers: h() })
+  }
+  async function createSCIMToken(description: string) {
+    return $fetch<{ id: string; token: string }>(`${BASE}/scim/tokens`, { method: 'POST', body: { description }, headers: h() })
+  }
+  async function deleteSCIMToken(id: string) {
+    await $fetch(`${BASE}/scim/tokens/${id}`, { method: 'DELETE', headers: h() })
+  }
+
+  // ── Audit forwarders ───────────────────────────────────────────────────────
+  async function listAuditForwarders() {
+    return $fetch<any[]>(`${BASE}/audit/forwarders`, { headers: h() })
+  }
+  async function createAuditForwarder(data: any) {
+    return $fetch<any>(`${BASE}/audit/forwarders`, { method: 'POST', body: data, headers: h() })
+  }
+  async function updateAuditForwarder(id: string, data: any) {
+    return $fetch<any>(`${BASE}/audit/forwarders/${id}`, { method: 'PUT', body: data, headers: h() })
+  }
+  async function deleteAuditForwarder(id: string) {
+    await $fetch(`${BASE}/audit/forwarders/${id}`, { method: 'DELETE', headers: h() })
   }
 
   // ── TLS mode ───────────────────────────────────────────────────────────────
@@ -583,6 +637,10 @@ export function useApi() {
     listNodeGroups, createNodeGroup, deleteNodeGroup, getGroupNodes, addNodeToGroup, removeNodeFromGroup,
     getNodeLabels, setNodeLabels,
     downloadComplianceReport,
+    listWebhooks, createWebhook, updateWebhook, deleteWebhook, testWebhook,
+    listSCIMTokens, createSCIMToken, deleteSCIMToken,
+    listAuditForwarders, createAuditForwarder, updateAuditForwarder, deleteAuditForwarder,
+    getSSOProviders,
     getTLSMode,
   }
 }
