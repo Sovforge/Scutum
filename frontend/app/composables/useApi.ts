@@ -505,6 +505,28 @@ export function useApi() {
     return $fetch<{ message: string }>(`${BASE}/auth/forgot-password`, { method: 'POST', body: payload })
   }
 
+  // ── Emergency Recovery Key (ERK) shares ────────────────────────────────────
+  async function erkGenerateShares(nShares: number, threshold: number): Promise<string[]> {
+    const res = await $fetch<{ shares: string[] }>(`${BASE}/recovery/generate-shares`, {
+      method: 'POST', body: { n_shares: nShares, threshold }, headers: h(),
+    })
+    return res.shares
+  }
+
+  async function erkReissueShares(shares: string[], nShares: number, threshold: number): Promise<string[]> {
+    const res = await $fetch<{ new_shares: string[] }>(`${BASE}/recovery/reissue-shares`, {
+      method: 'POST', body: { shares, n_shares: nShares, threshold }, headers: h(),
+    })
+    return res.new_shares
+  }
+
+  async function erkRecover(shares: string[], nShares: number, threshold: number): Promise<string[]> {
+    const res = await $fetch<{ new_shares: string[] }>(`${BASE}/recovery/recover`, {
+      method: 'POST', body: { shares, n_shares: nShares, threshold }, headers: h(),
+    })
+    return res.new_shares
+  }
+
   // ── Audit export ───────────────────────────────────────────────────────────
   function auditExportUrl(format: 'csv' | 'json' = 'csv', limit = 5000): string {
     const token = getToken()
@@ -644,5 +666,6 @@ export function useApi() {
     listAuditForwarders, createAuditForwarder, updateAuditForwarder, deleteAuditForwarder,
     getSSOProviders,
     getTLSMode,
+    erkGenerateShares, erkReissueShares, erkRecover,
   }
 }

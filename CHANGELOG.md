@@ -9,6 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **IronKey / USB share export**: Emergency Recovery Key shares can now be saved directly to a USB drive (e.g. IronKey) via the File System Access API (`showSaveFilePicker`). Each share gets its own `.erk` file. Falls back to `<a download>` for browsers without File System Access API support (Firefox, Safari). USB import (`showOpenFilePicker`) is also supported when loading shares for reissue or recovery. See `/settings/recovery`.
+- **Recovery Keys settings page** (`/settings/recovery`): Admin page for generating a fresh set of ERK shares from the current master key and reissuing existing shares when a share holder leaves or a share is compromised. Per-share USB export and USB-load-from-file for input shares.
+- **Node groups UI**: Nodes page now includes a Node Groups section. Groups can be created, deleted, and expanded inline to add or remove member nodes via a dropdown selector.
+- **Settings sidebar for sub-pages**: Federation, Webhooks, SCIM, and Recovery Keys pages now render with the shared settings navigation sidebar (`SettingsShell` component), consistent with the rest of the settings area.
+
+### Changed
+- **Node type simplified**: The `combined` node type has been removed. Valid node types are now `hub` and `remote` only. Existing `peer`, `edge`, and `combined` rows are migrated to `remote` on first startup. The node enrollment modal, filters, stats strip, and default role in Node Defaults settings have all been updated accordingly.
+
+### Fixed
+- **SQLite schema**: `node_groups`, `node_group_members`, and `audit_forwarders` tables were truncated (missing closing `);` and missing `description`/`created_at` columns on `node_groups`). The same truncation existed across SQLite, MySQL, and PostgreSQL schemas and caused a fatal `near "CREATE": syntax error` on startup.
+- **useApi.ts EOF**: `downloadComplianceReport` was missing its closing `}`, causing all subsequent function declarations (Webhooks, SCIM, SSO, audit forwarders) to be parsed inside that function body, producing an unexpected-EOF build failure.
+
 - **Hub federation**: Link two independent Scutum instances so their WireGuard meshes can route to each other. Adding a federation peer (`POST /api/federation/peers`) registers the remote hub's public key and mesh CIDR as a WireGuard peer with persistent keepalive; removing it tears the tunnel down. Status is tracked per peer (`pending` / `connected` / `error`).
 - **Node groups and labels**: Tag nodes with arbitrary key=value labels (`PUT /api/nodes/{id}/labels`) and organise them into named groups (`GET|POST /api/groups`). Groups track membership explicitly; `GET /api/groups/{id}/nodes` lists all member nodes. Useful for targeting bulk operations by environment, region, or role.
 - **CRA compliance report** (`GET /api/compliance/report`): Generates a structured report covering users, mesh topology, audit log summary, security incidents, encryption details, key management status, and audit retention policy — aligned with EU Cyber Resilience Act (CRA) 2024/2847. Available in `json` (default), `csv` (raw audit log), and `text` (human-readable) formats via the `?format=` query parameter.

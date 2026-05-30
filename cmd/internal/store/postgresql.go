@@ -67,7 +67,7 @@ const postgresSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
 	id          TEXT PRIMARY KEY,
 	name        TEXT NOT NULL,
-	type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
+	type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 	address     TEXT NOT NULL,
 	public_key  TEXT NOT NULL,
 	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()

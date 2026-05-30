@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-page">
+  <SettingsShell>
     <div class="page-header">
       <h1 class="page-title">Webhook Notifications</h1>
       <button class="btn-primary" @click="showForm = true">
@@ -105,7 +105,7 @@
 
     <!-- Toast -->
     <div v-if="toast" class="toast" :class="`toast--${toast.type}`">{{ toast.msg }}</div>
-  </div>
+  </SettingsShell>
 </template>
 
 <script setup lang="ts">
