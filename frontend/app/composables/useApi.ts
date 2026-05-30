@@ -560,6 +560,8 @@ export function useApi() {
     a.download = `cra-compliance-report.${ext}`
     a.click()
     URL.revokeObjectURL(url)
+  }
+
   // ── Webhooks ───────────────────────────────────────────────────────────────
   async function listWebhooks() {
     return $fetch<any[]>(`${BASE}/webhooks`, { headers: h() })
