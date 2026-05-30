@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-page">
+  <SettingsShell>
     <div class="page-header">
       <div>
         <h1 class="page-title">Hub Federation</h1>
@@ -66,7 +66,7 @@
         </div>
       </div>
     </div>
-  </div>
+  </SettingsShell>
 </template>
 
 <script setup lang="ts">

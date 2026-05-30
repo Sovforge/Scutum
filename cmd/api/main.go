@@ -298,7 +298,7 @@ func main() {
 		logger.Error("edge registration failed after all attempts")
 	}()
 
-	// For edge (remote/combined) installs: push our current WireGuard endpoint to
+	// For remote installs: push our current WireGuard endpoint to
 	// the hub on startup so the hub's wg_peers table stays accurate even when our
 	// public IP or NAT mapping has changed since initial setup.
 	go registerOwnEndpoint(ctx, db, logger, meshTLSConfig)
@@ -885,7 +885,7 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 	}
 
 	for _, node := range nodes {
-		if node.Type != "remote" && node.Type != "combined" {
+		if node.Type != "remote" {
 			continue
 		}
 		apiBase := nodeAPIBase(node.Address)
@@ -928,7 +928,7 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 // laptop roaming between WiFi and mobile hotspot).
 const endpointRefreshInterval = 2 * time.Minute
 
-// registerOwnEndpoint runs on edge (remote/combined) nodes. It pushes the
+// registerOwnEndpoint runs on remote nodes. It pushes the
 // node's current WireGuard listen port to the hub; the hub derives the full
 // endpoint as "observed-source-IP:listen_port" and stores it in wg_peers.
 // After the initial registration it loops, re-registering every

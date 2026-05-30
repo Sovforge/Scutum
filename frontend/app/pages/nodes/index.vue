@@ -79,6 +79,102 @@
       </table>
     </UiCard>
 
+    <!-- Node Groups card -->
+    <UiCard title="Node Groups">
+      <template #header-right>
+        <button class="toolbar__enroll" @click="showGroupForm = true">
+          <Icon name="lucide:plus" size="14" /> New Group
+        </button>
+      </template>
+
+      <div v-if="groupsLoading" class="loading-row">Loading…</div>
+      <div v-else-if="!groups.length" class="data-table__empty" style="padding:1.5rem;text-align:center">
+        <Icon name="lucide:layers" size="20" style="opacity:0.3;display:block;margin:0 auto 0.5rem" />
+        No groups yet. Create one to organise nodes by role or environment.
+      </div>
+      <template v-else>
+        <div v-for="group in groups" :key="group.id" class="group-row">
+          <div class="group-header" @click="toggleGroup(group.id)">
+            <div class="group-header__left">
+              <Icon :name="expandedGroup === group.id ? 'lucide:chevron-down' : 'lucide:chevron-right'" size="13" class="group-chevron" />
+              <span class="group-name">{{ group.name }}</span>
+              <span v-if="group.description" class="group-desc">{{ group.description }}</span>
+            </div>
+            <div class="group-header__right">
+              <span class="group-count">{{ group.members?.length ?? 0 }} node{{ (group.members?.length ?? 0) !== 1 ? 's' : '' }}</span>
+              <template v-if="pendingGroupDelete === group.id">
+                <span class="delete-confirm-label">Delete?</span>
+                <button class="icon-btn" @click.stop="pendingGroupDelete = null">Cancel</button>
+                <button class="icon-btn icon-btn--danger" @click.stop="deleteGroup(group.id)">Confirm</button>
+              </template>
+              <button v-else class="icon-btn icon-btn--danger" title="Delete group" @click.stop="pendingGroupDelete = group.id">
+                <Icon name="lucide:trash-2" size="13" />
+              </button>
+            </div>
+          </div>
+
+          <div v-if="expandedGroup === group.id" class="group-members">
+            <div v-if="!groupNodes[group.id]?.length" class="group-empty">No nodes in this group.</div>
+            <div v-for="n in groupNodes[group.id]" :key="n.id" class="group-member">
+              <UiStatusDot status="pending" />
+              <span class="group-member__name">{{ n.name }}</span>
+              <UiBadge variant="info">{{ n.type }}</UiBadge>
+              <button class="icon-btn icon-btn--danger" title="Remove from group" @click="removeMember(group.id, n.id)">
+                <Icon name="lucide:x" size="12" />
+              </button>
+            </div>
+            <div class="group-add-row">
+              <select v-model="addMemberNode[group.id]" class="form-select form-select--sm">
+                <option value="">Add a node…</option>
+                <option
+                  v-for="n in nodesNotInGroup(group)"
+                  :key="n.id"
+                  :value="n.id"
+                >{{ n.name }} ({{ n.type }})</option>
+              </select>
+              <button
+                class="toolbar__enroll"
+                :disabled="!addMemberNode[group.id]"
+                @click="addMember(group.id)"
+              >Add</button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </UiCard>
+
+  </div>
+
+  <!-- New Group Modal -->
+  <div v-if="showGroupForm" class="modal-backdrop" @click.self="showGroupForm = false">
+    <div class="modal modal--sm">
+      <div class="modal__header">
+        <div class="modal__title">
+          <Icon name="lucide:layers" size="15" class="modal__title-icon" />
+          New Node Group
+        </div>
+        <button class="modal__close" @click="showGroupForm = false"><Icon name="lucide:x" size="15" /></button>
+      </div>
+      <div class="modal__body">
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">Name</label>
+            <input v-model="groupForm.name" class="form-input" placeholder="production" />
+          </div>
+          <div class="form-row">
+            <label class="form-label">Description</label>
+            <input v-model="groupForm.description" class="form-input" placeholder="Optional description" />
+          </div>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <p v-if="groupError" class="enroll-error">{{ groupError }}</p>
+        <button class="cancel-btn" @click="showGroupForm = false">Cancel</button>
+        <button class="save-btn" @click="createGroup" :disabled="groupSaving || !groupForm.name">
+          <Icon name="lucide:plus" size="14" /> {{ groupSaving ? 'Creating…' : 'Create Group' }}
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Manual Enrollment Modal -->
@@ -97,7 +193,7 @@
       <div class="modal__body">
         <div class="enroll-note">
           <Icon name="lucide:info" size="13" class="enroll-note__icon" />
-          Enter the remote or edge node's WireGuard details. That node must have already been configured to point to this hub — enrollment here adds it to the mesh and authorises the connection.
+          Enter the remote node's WireGuard details. That node must have already been configured to point to this hub — enrollment here adds it to the mesh and authorises the connection.
         </div>
 
         <!-- Hub's own key — remote operators need this to configure their node -->
@@ -150,7 +246,6 @@
             <select v-model="enrollForm.role" class="form-select">
               <option value="remote">Remote</option>
               <option value="hub">Hub</option>
-              <option value="combined">Combined</option>
             </select>
           </div>
         </div>
@@ -275,13 +370,12 @@ async function confirmDelete(id: string) {
 
 // ── Filter / search ────────────────────────────────────────────────────────
 const search       = ref('')
-const activeFilter = ref<'all' | 'hub' | 'remote' | 'combined'>('all')
+const activeFilter = ref<'all' | 'hub' | 'remote'>('all')
 
 const filters = [
-  { label: 'All',      value: 'all'      },
-  { label: 'Hub',      value: 'hub'      },
-  { label: 'Remote',   value: 'remote'   },
-  { label: 'Combined', value: 'combined' },
+  { label: 'All',    value: 'all'    },
+  { label: 'Hub',    value: 'hub'    },
+  { label: 'Remote', value: 'remote' },
 ] as const
 
 const filtered = computed(() =>
@@ -294,11 +388,99 @@ const filtered = computed(() =>
 )
 
 const stats = computed(() => [
-  { label: 'Total',    value: nodes.value.length },
-  { label: 'Hub',      value: nodes.value.filter(n => n.type === 'hub').length },
-  { label: 'Remote',   value: nodes.value.filter(n => n.type === 'remote').length },
-  { label: 'Combined', value: nodes.value.filter(n => n.type === 'combined').length },
+  { label: 'Total',  value: nodes.value.length },
+  { label: 'Hub',    value: nodes.value.filter(n => n.type === 'hub').length },
+  { label: 'Remote', value: nodes.value.filter(n => n.type === 'remote').length },
 ])
+
+// ── Node Groups ────────────────────────────────────────────────────────────
+interface NodeGroup { id: string; name: string; description: string; members?: string[] }
+
+const groups        = ref<NodeGroup[]>([])
+const groupsLoading = ref(true)
+const expandedGroup = ref<string | null>(null)
+const groupNodes    = ref<Record<string, any[]>>({})
+const addMemberNode = ref<Record<string, string>>({})
+const pendingGroupDelete = ref<string | null>(null)
+const showGroupForm  = ref(false)
+const groupSaving    = ref(false)
+const groupError     = ref('')
+const groupForm      = reactive({ name: '', description: '' })
+
+async function loadGroups() {
+  groupsLoading.value = true
+  try {
+    groups.value = await api.listNodeGroups()
+  } catch {}
+  groupsLoading.value = false
+}
+
+onMounted(loadGroups)
+
+async function toggleGroup(id: string) {
+  if (expandedGroup.value === id) {
+    expandedGroup.value = null
+    return
+  }
+  expandedGroup.value = id
+  if (!groupNodes.value[id]) {
+    try {
+      groupNodes.value[id] = await api.getGroupNodes(id)
+    } catch {
+      groupNodes.value[id] = []
+    }
+  }
+}
+
+function nodesNotInGroup(group: NodeGroup) {
+  const memberIds = new Set(groupNodes.value[group.id]?.map((n: any) => n.id) ?? [])
+  return nodes.value.filter(n => !memberIds.has(n.id))
+}
+
+async function addMember(groupId: string) {
+  const nodeId = addMemberNode.value[groupId]
+  if (!nodeId) return
+  try {
+    await api.addNodeToGroup(groupId, nodeId)
+    groupNodes.value[groupId] = await api.getGroupNodes(groupId)
+    addMemberNode.value[groupId] = ''
+    await loadGroups()
+  } catch {}
+}
+
+async function removeMember(groupId: string, nodeId: string) {
+  try {
+    await api.removeNodeFromGroup(groupId, nodeId)
+    groupNodes.value[groupId] = await api.getGroupNodes(groupId)
+    await loadGroups()
+  } catch {}
+}
+
+async function deleteGroup(id: string) {
+  try {
+    await api.deleteNodeGroup(id)
+    if (expandedGroup.value === id) expandedGroup.value = null
+    delete groupNodes.value[id]
+    await loadGroups()
+  } catch {}
+  pendingGroupDelete.value = null
+}
+
+async function createGroup() {
+  if (!groupForm.name) return
+  groupError.value = ''
+  groupSaving.value = true
+  try {
+    await api.createNodeGroup({ name: groupForm.name, description: groupForm.description })
+    await loadGroups()
+    showGroupForm.value = false
+    Object.assign(groupForm, { name: '', description: '' })
+  } catch (e: any) {
+    groupError.value = e?.data?.error ?? 'Failed to create group'
+  } finally {
+    groupSaving.value = false
+  }
+}
 
 </script>
 
@@ -350,7 +532,7 @@ const stats = computed(() => [
 /* Stats */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
 .stat-card {
@@ -573,4 +755,46 @@ const stats = computed(() => [
   padding: 0.45rem 1rem; font-size: 0.82rem; color: var(--text-muted); cursor: pointer;
 }
 .cancel-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+
+/* Groups */
+.group-row {
+  border-bottom: 1px solid var(--border);
+}
+.group-row:last-child { border-bottom: none; }
+
+.group-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.65rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.group-header:hover { background: var(--hover-bg); }
+.group-header__left { display: flex; align-items: center; gap: 0.5rem; }
+.group-header__right { display: flex; align-items: center; gap: 0.5rem; }
+.group-chevron { color: var(--text-dim); flex-shrink: 0; }
+.group-name { font-size: 0.85rem; font-weight: 500; color: var(--text-primary); }
+.group-desc { font-size: 0.78rem; color: var(--text-muted); }
+.group-count { font-size: 0.75rem; color: var(--text-dim); }
+
+.group-members {
+  padding: 0.5rem 0.75rem 0.75rem 2rem;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  background: var(--bg-base);
+}
+.group-empty { font-size: 0.78rem; color: var(--text-subtle); padding: 0.25rem 0; }
+.group-member {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 0.375rem; font-size: 0.8rem;
+}
+.group-member__name { flex: 1; color: var(--text-secondary); font-weight: 500; }
+
+.group-add-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+.form-select--sm { padding: 0.3rem 0.5rem; font-size: 0.78rem; flex: 1; max-width: 260px; }
+
+.modal--sm { width: 400px; }
 </style>
