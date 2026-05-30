@@ -34,6 +34,9 @@
 - [🚀 Getting Started](#getting-started)
   - [Running Outside Docker (Advanced)](#running-outside-docker-advanced)
 - [🛡️ The Scutum Advantage](#the-sovereign-advantage)
+- [🔗 Hub Federation](#hub-federation)
+- [🏷️ Node Groups and Labels](#node-groups-and-labels)
+- [📋 CRA Compliance Report](#cra-compliance-report)
 - [🔔 Webhook Notifications](#webhook-notifications)
 - [🔗 SCIM 2.0 Provisioning](#scim-20-provisioning)
 - [📤 Audit Log Forwarding](#audit-log-forwarding)
@@ -490,6 +493,74 @@ Environment variables:
 
 ---
 
+## 🔗 Hub Federation
+
+Connect two independent Scutum instances so nodes in each mesh can route to nodes in the other. Federation adds a WireGuard peer between the two hub interfaces and installs the remote mesh CIDR as an allowed route.
+
+```bash
+# On hub-A: add hub-B as a federation peer
+curl -X POST /api/federation/peers \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "name": "hub-b",
+    "wg_endpoint": "203.0.113.10:51820",
+    "wg_public_key": "<hub-B public key>",
+    "mesh_cidr": "10.200.0.0/24"
+  }'
+# Repeat symmetrically on hub-B pointing at hub-A
+```
+
+Once both sides have each other registered, WireGuard routes traffic across the tunnel automatically. `GET /api/federation/peers` shows live status.
+
+---
+
+## 🏷️ Node Groups and Labels
+
+Organise nodes with free-form labels and named groups for targeting bulk operations.
+
+```bash
+# Tag a node
+curl -X PUT /api/nodes/<id>/labels \
+  -H "Authorization: Bearer <token>" \
+  -d '{"env":"prod","region":"eu-west"}'
+
+# Create a group and add members
+curl -X POST /api/groups -d '{"name":"prod-eu","description":"EU production nodes"}'
+curl -X POST /api/groups/<group-id>/members -d '{"node_id":"<node-id>"}'
+
+# List nodes in a group
+curl /api/groups/<group-id>/nodes
+```
+
+---
+
+## 📋 CRA Compliance Report
+
+Generate a structured compliance report aligned with the **EU Cyber Resilience Act (CRA) 2024/2847**.
+
+```bash
+# JSON report (default) — download and archive
+curl /api/compliance/report -H "Authorization: Bearer <admin-token>" \
+  -o cra-report.json
+
+# CSV audit log export — import into a SIEM or spreadsheet
+curl "/api/compliance/report?format=csv" -H "Authorization: Bearer <admin-token>" \
+  -o audit-log.csv
+
+# Human-readable text summary
+curl "/api/compliance/report?format=text" -H "Authorization: Bearer <admin-token>"
+```
+
+The report covers:
+
+| Section | Contents |
+|---|---|
+| **Users** | All accounts and creation timestamps |
+| **Mesh** | Node inventory with type and address |
+| **Audit summary** | Event counts by action and outcome, failed logins, permission denials |
+| **Security** | Encryption algorithms, auth methods, rate limiting status, audit retention |
+| **Key management** | Hub HMAC key and WireGuard config presence |
+| **Incidents** | All failed/denied audit events with actor, IP, and path |
 ## 🔔 Webhook Notifications
 
 Scutum can POST a signed JSON payload to any HTTP endpoint when key mesh events occur.

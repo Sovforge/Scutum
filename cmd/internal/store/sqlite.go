@@ -258,6 +258,29 @@ CREATE TABLE IF NOT EXISTS nodes (
 		id         INTEGER PRIMARY KEY CHECK(id = 1)
 	);
 
+	CREATE TABLE IF NOT EXISTS federation_peers (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		hub_url        TEXT NOT NULL,
+		wg_endpoint    TEXT NOT NULL,
+		wg_public_key  TEXT NOT NULL,
+		mesh_cidr      TEXT NOT NULL,
+		allowed_ips    TEXT NOT NULL DEFAULT '',
+		status         TEXT NOT NULL DEFAULT 'pending',
+		last_seen      DATETIME,
+		created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS node_labels (
+		node_id   TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		label_key TEXT NOT NULL,
+		value     TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (node_id, label_key)
+	);
+
+	CREATE TABLE IF NOT EXISTS node_groups (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL UNIQUE,
 	CREATE TABLE IF NOT EXISTS webhook_configs (
 		id         TEXT PRIMARY KEY,
 		name       TEXT NOT NULL,
@@ -275,6 +298,10 @@ CREATE TABLE IF NOT EXISTS nodes (
 		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS node_group_members (
+		group_id TEXT NOT NULL REFERENCES node_groups(id) ON DELETE CASCADE,
+		node_id  TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		PRIMARY KEY (group_id, node_id)
 	CREATE TABLE IF NOT EXISTS audit_forwarders (
 		id         TEXT PRIMARY KEY,
 		name       TEXT NOT NULL,
