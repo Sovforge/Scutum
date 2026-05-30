@@ -25,16 +25,11 @@
         </NuxtLink>
         <NuxtLink to="/settings/federation" class="settings-nav__item">
           <Icon name="lucide:git-merge" size="15" /> Federation
-        <NuxtLink to="/settings/rbac"     class="settings-nav__item">
-          <Icon name="lucide:shield" size="15" /> RBAC
         </NuxtLink>
-        <NuxtLink to="/settings/secrets"  class="settings-nav__item">
-          <Icon name="lucide:key-round" size="15" /> Secrets / KMS
-        </NuxtLink>
-        <NuxtLink to="/settings/webhooks" class="settings-nav__item">
+        <NuxtLink to="/settings/webhooks"   class="settings-nav__item">
           <Icon name="lucide:webhook" size="15" /> Webhooks
         </NuxtLink>
-        <NuxtLink to="/settings/scim"     class="settings-nav__item">
+        <NuxtLink to="/settings/scim"       class="settings-nav__item">
           <Icon name="lucide:users" size="15" /> SCIM
         </NuxtLink>
       </nav>
