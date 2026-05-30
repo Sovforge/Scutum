@@ -328,6 +328,47 @@
           </UiCard>
         </template>
 
+        <!-- TLS -->
+        <template v-if="activeSection === 'tls'">
+          <UiCard title="TLS / HTTPS">
+            <div class="form-grid">
+              <div class="form-row">
+                <label class="form-label">Mode</label>
+                <span v-if="tlsMode.mode === 'acme'" class="tls-badge tls-badge--acme">
+                  <Icon name="lucide:shield-check" size="13" /> ACME / Let&#39;s Encrypt
+                </span>
+                <span v-else-if="tlsMode.mode === 'manual'" class="tls-badge tls-badge--manual">
+                  <Icon name="lucide:file-key" size="13" /> Manual certificate
+                </span>
+                <span v-else class="tls-badge tls-badge--none">
+                  <Icon name="lucide:shield-off" size="13" /> Plain HTTP (no TLS)
+                </span>
+              </div>
+              <template v-if="tlsMode.mode === 'acme'">
+                <div class="form-row">
+                  <label class="form-label">Domain</label>
+                  <span class="form-value mono">{{ tlsMode.domain }}</span>
+                </div>
+                <div class="form-row">
+                  <label class="form-label">Email</label>
+                  <span class="form-value">{{ tlsMode.email }}</span>
+                </div>
+                <div class="form-row">
+                  <label class="form-label">Staging</label>
+                  <span class="form-value">{{ tlsMode.staging ? 'Yes (staging)' : 'No (production)' }}</span>
+                </div>
+              </template>
+              <template v-else-if="tlsMode.mode === 'manual'">
+                <div class="form-row">
+                  <label class="form-label">Certificate file</label>
+                  <span class="form-value mono">{{ tlsMode.cert_file }}</span>
+                </div>
+              </template>
+            </div>
+            <p class="tls-note">TLS mode is controlled by environment variables (<code>ACME_DOMAIN</code> / <code>CERT_FILE</code>). Restart the server after changing them.</p>
+          </UiCard>
+        </template>
+
         <!-- Save bar -->
         <div class="save-bar">
           <button class="save-btn">
@@ -363,7 +404,7 @@ async function exportDB() {
   }
 }
 
-type SectionId = 'general' | 'mesh' | 'nodes' | 'database' | 'auth' | 'audit'
+type SectionId = 'general' | 'mesh' | 'nodes' | 'database' | 'auth' | 'audit' | 'tls'
 
 const sections = [
   { id: 'general'  as SectionId, icon: 'lucide:sliders-horizontal', label: 'General'   },
@@ -372,6 +413,7 @@ const sections = [
   { id: 'database' as SectionId, icon: 'lucide:database',           label: 'Database'  },
   { id: 'auth'     as SectionId, icon: 'lucide:lock',               label: 'Auth'      },
   { id: 'audit'    as SectionId, icon: 'lucide:send',               label: 'Forwarding'},
+  { id: 'tls'      as SectionId, icon: 'lucide:shield',             label: 'TLS'       },
 ]
 
 const activeSection = ref<SectionId>('general')
@@ -451,6 +493,10 @@ async function deleteFwd(id: string) {
 }
 
 watch(activeSection, (s) => { if (s === 'audit') loadForwarders() })
+
+// ── TLS mode ─────────────────────────────────────────────────────────────────
+const tlsMode = ref<{ mode: string; domain?: string; email?: string; staging?: boolean; cert_file?: string }>({ mode: 'none' })
+onMounted(async () => { tlsMode.value = await api.getTLSMode().catch(() => ({ mode: 'none' })) })
 </script>
 
 <style scoped>
@@ -757,4 +803,34 @@ watch(activeSection, (s) => { if (s === 'audit') loadForwarders() })
 .mt { margin-top: 1rem; }
 .mt-sm { margin-top: 0.5rem; }
 .form-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+
+/* ── TLS ─────────────────────────────────────────────────────────────────── */
+.tls-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.tls-badge--acme   { background: var(--success-bg, #14532d22); color: var(--success-light); }
+.tls-badge--manual { background: var(--accent-subtle); color: var(--accent-light); }
+.tls-badge--none   { background: var(--bg-elevated); color: var(--text-dim); }
+
+.form-value { font-size: 0.875rem; color: var(--text-primary); }
+.form-value.mono { font-family: monospace; }
+
+.tls-note {
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.tls-note code {
+  font-family: monospace;
+  background: var(--bg-elevated);
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.2rem;
+}
 </style>

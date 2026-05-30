@@ -539,6 +539,11 @@ export function useApi() {
     await $fetch(`${BASE}/audit/forwarders/${id}`, { method: 'DELETE', headers: h() })
   }
 
+  // ── TLS mode ───────────────────────────────────────────────────────────────
+  async function getTLSMode(): Promise<{ mode: string; domain?: string; email?: string; staging?: boolean; cert_file?: string }> {
+    return $fetch(`${BASE}/system/tls-mode`)
+  }
+
   // ── Database export ────────────────────────────────────────────────────────
   async function exportDatabase(): Promise<Blob> {
     const res = await fetch(`${BASE}/admin/export`, { headers: h() })
@@ -568,5 +573,6 @@ export function useApi() {
     listWebhooks, createWebhook, updateWebhook, deleteWebhook, testWebhook,
     listSCIMTokens, createSCIMToken, deleteSCIMToken,
     listAuditForwarders, createAuditForwarder, updateAuditForwarder, deleteAuditForwarder,
+    getTLSMode,
   }
 }

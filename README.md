@@ -75,7 +75,19 @@ rm secrets/server.csr secrets/ca.srl
 chmod 600 secrets/*.key
 ```
 
-> **Tip:** Replace `IP:127.0.0.1` with your VPS's public IP so browsers trust the cert without a warning. For production, use a cert from Let's Encrypt or your own CA.
+> **Tip:** Replace `IP:127.0.0.1` with your VPS's public IP so browsers trust the cert without a warning. For production, use automatic TLS below.
+
+#### Automatic TLS (ACME / Let's Encrypt)
+
+Skip the manual cert generation entirely by setting three environment variables:
+
+```bash
+ACME_DOMAIN=scutum.example.com   # your public hostname
+ACME_EMAIL=admin@example.com     # used for expiry notifications
+# ACME_STAGING=true              # uncomment to use LE staging while testing
+```
+
+Scutum will provision and auto-renew a trusted certificate from Let's Encrypt on first start. Port 80 must be reachable from the internet for the HTTP-01 challenge. All plain-HTTP requests are automatically redirected to HTTPS.
 
 ---
 
@@ -455,6 +467,10 @@ Environment variables:
 | `CERT_FILE` | `$SECRETS_DIR/server.crt` | Path to the TLS certificate |
 | `KEY_FILE` | `$SECRETS_DIR/server.key` | Path to the TLS private key |
 | `CA_CERT_FILE` | *(unset)* | Path to a CA certificate to enable mTLS client verification |
+| `ACME_DOMAIN` | *(unset)* | Enable Let's Encrypt auto-TLS for this domain (disables manual cert) |
+| `ACME_EMAIL` | *(unset)* | Contact email for Let's Encrypt expiry notifications |
+| `ACME_STAGING` | `false` | Use Let's Encrypt staging environment |
+| `ACME_CACHE_DIR` | `$SECRETS_DIR/acme` | Directory for cached ACME certificates |
 | `AUDIT_ENABLED` | `false` | Set to `true` to enable the security audit log |
 | `AUDIT_RETENTION_DAYS` | `365` | Days to retain audit log entries (CRA recommends ≥ 1 year) |
 | `HEALER_INTERVAL` | `30s` | How often the mesh healer reconciles peer state (Go duration string) |

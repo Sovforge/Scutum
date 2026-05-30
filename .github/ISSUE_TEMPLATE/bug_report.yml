@@ -1,0 +1,80 @@
+name: Bug Report
+description: Report a reproducible bug in Scutum
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as possible so we can reproduce and fix it quickly.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: Describe the bug...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: Describe the expected behaviour...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the exact steps needed to trigger the bug.
+      placeholder: |
+        1. Start Scutum with ...
+        2. Navigate to ...
+        3. Click on ...
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      description: Paste any relevant log output. This will be automatically formatted as code.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Scutum version
+      placeholder: e.g. v1.1.0 or commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment method
+      options:
+        - Docker (docker run)
+        - Docker Compose
+        - Kubernetes / Helm
+        - Kubernetes Operator
+        - Binary (direct)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Host OS and architecture
+      placeholder: e.g. Ubuntu 24.04 / amd64
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that might be relevant — network topology, database type, KMS provider, etc.
