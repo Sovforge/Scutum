@@ -251,6 +251,10 @@ CREATE TABLE IF NOT EXISTS node_labels (
 CREATE TABLE IF NOT EXISTS node_groups (
 	id          TEXT PRIMARY KEY,
 	name        TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS webhook_configs (
 	id         TEXT PRIMARY KEY,
 	name       TEXT NOT NULL,
@@ -272,6 +276,8 @@ CREATE TABLE IF NOT EXISTS node_group_members (
 	group_id TEXT NOT NULL REFERENCES node_groups(id) ON DELETE CASCADE,
 	node_id  TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
 	PRIMARY KEY (group_id, node_id)
+);
+
 CREATE TABLE IF NOT EXISTS audit_forwarders (
 	id         TEXT PRIMARY KEY,
 	name       TEXT NOT NULL,
@@ -279,6 +285,8 @@ CREATE TABLE IF NOT EXISTS audit_forwarders (
 	format     TEXT NOT NULL DEFAULT 'json',
 	enabled    INTEGER NOT NULL DEFAULT 1,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS sso_identities (
 	id         TEXT PRIMARY KEY,
 	user_id    TEXT NOT NULL REFERENCES users(id),

@@ -261,6 +261,10 @@ CREATE TABLE IF NOT EXISTS node_labels (
 CREATE TABLE IF NOT EXISTS node_groups (
     id          VARCHAR(36) PRIMARY KEY,
     name        VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS webhook_configs (
     id         VARCHAR(36) PRIMARY KEY,
     name       VARCHAR(255) NOT NULL,
@@ -282,6 +286,8 @@ CREATE TABLE IF NOT EXISTS node_group_members (
     group_id VARCHAR(36) NOT NULL,
     node_id  VARCHAR(36) NOT NULL,
     PRIMARY KEY (group_id, node_id)
+);
+
 CREATE TABLE IF NOT EXISTS audit_forwarders (
     id         VARCHAR(36) PRIMARY KEY,
     name       VARCHAR(255) NOT NULL,
@@ -289,6 +295,8 @@ CREATE TABLE IF NOT EXISTS audit_forwarders (
     format     VARCHAR(16) NOT NULL DEFAULT 'json',
     enabled    TINYINT NOT NULL DEFAULT 1,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS sso_identities (
     id         VARCHAR(255) PRIMARY KEY,
     user_id    VARCHAR(255) NOT NULL,
