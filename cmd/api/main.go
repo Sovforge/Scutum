@@ -30,6 +30,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	scutumacme "scutum/cmd/internal/acme"
 	"scutum/cmd/internal/auth"
 	"scutum/cmd/internal/handlers"
 	"scutum/cmd/internal/kms"
@@ -555,6 +556,10 @@ func main() {
 	apiMux.Handle("POST /recovery/recover", require("admin", "admin", recoveryCtrl.HandleRecover))
 	apiMux.Handle("POST /recovery/reissue-shares", require("admin", "admin", recoveryCtrl.HandleReissueShares))
 
+	// System info (public)
+	systemCtrl := handlers.NewSystemHandler()
+	apiMux.Handle("GET /system/tls-mode", http.HandlerFunc(systemCtrl.HandleTLSMode))
+
 	// API docs (public)
 	docsCtrl := handlers.NewDocsHandler(openAPISpec)
 	apiMux.HandleFunc("GET /openapi.yaml", docsCtrl.HandleSpec)
@@ -625,7 +630,27 @@ func main() {
 		TLSConfig:    tlsConfig,
 	}
 
-	if useTLS {
+	acmeCfg := scutumacme.FromEnv(secretsDir)
+	if acmeCfg.Enabled() {
+		acmeMgr := scutumacme.New(acmeCfg)
+		server.TLSConfig = acmeMgr.TLSConfig()
+		go func() {
+			logger.Info("ACME HTTP-01 challenge server starting", "addr", ":80")
+			if err := http.ListenAndServe(":80", acmeMgr.ChallengeHandler(acmeCfg.Domain)); !errors.Is(err, http.ErrServerClosed) { //nolint:gosec
+				logger.Error("acme http server failed", "error", err)
+			}
+		}()
+		logger.Info("scutum API starting (HTTPS/ACME)", "addr", port, "domain", acmeCfg.Domain)
+		go func() {
+			ln, err := tls.Listen("tcp", port, acmeMgr.TLSConfig())
+			if err != nil {
+				logger.Fatal("acme tls listener failed", "error", err)
+			}
+			if err := server.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+				logger.Fatal("https server failed", "error", err)
+			}
+		}()
+	} else if useTLS {
 		logger.Info("scutum API starting (HTTPS)", "addr", port, "cert", certFile)
 		go func() {
 			if err := server.ListenAndServeTLS(certFile, keyFile); !errors.Is(err, http.ErrServerClosed) {
