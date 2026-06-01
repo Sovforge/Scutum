@@ -89,13 +89,14 @@ type kmsConfig struct {
 }
 
 type wireguardConfig struct {
-	ListenPort    int    `json:"listen_port,omitempty"`
-	Address       string `json:"address,omitempty"`
-	MTU           int    `json:"mtu,omitempty"`
-	HubEndpoint   string `json:"hub_endpoint,omitempty"`
-	HubPublicKey  string `json:"hub_public_key,omitempty"`
-	HubAllowedIPs string `json:"hub_allowed_ips,omitempty"`
-	HubHMACKey    string `json:"hub_hmac_key,omitempty"`
+	ListenPort     int    `json:"listen_port,omitempty"`
+	Address        string `json:"address,omitempty"`
+	MTU            int    `json:"mtu,omitempty"`
+	HubEndpoint    string `json:"hub_endpoint,omitempty"`
+	HubPublicKey   string `json:"hub_public_key,omitempty"`
+	HubAllowedIPs  string `json:"hub_allowed_ips,omitempty"`
+	HubHMACKey     string `json:"hub_hmac_key,omitempty"`
+	HubAPIAddress  string `json:"hub_api_address,omitempty"` // host:port of the hub's HTTP API
 }
 
 type setupRequest struct {
@@ -457,26 +458,41 @@ func (h *SetupHandler) setupWireGuard(ctx context.Context, req setupRequest) (*w
 		if err := utils.AddPeer("wg0", wg.HubPublicKey, wg.HubEndpoint, wg.HubAllowedIPs, 25); err != nil {
 			return nil, fmt.Errorf("add hub as peer: %w", err)
 		}
-		// Persist the hub peer so it can be restored after a container restart.
+		// Store the hub's API address so registerOwnEndpoint can reach the HTTP API.
+		// Address here is the API host:port, not the WireGuard endpoint.
+		hubAPIAddr := wg.HubAPIAddress
+		if hubAPIAddr == "" {
+			hubAPIAddr = wg.HubEndpoint // best-effort fallback (likely wrong port)
+		}
 		_ = h.store.CreateNode(ctx, store.NodeRecord{
 			ID: "hub", Name: "hub", Type: "hub",
-			Address: wg.HubEndpoint, PublicKey: wg.HubPublicKey,
+			Address: hubAPIAddr, PublicKey: wg.HubPublicKey,
 		})
 		_ = h.store.UpsertWGPeer(ctx, store.WGPeerRecord{
 			NodeID: "hub", Endpoint: wg.HubEndpoint, AllowedIPs: wg.HubAllowedIPs,
 		})
+		if wg.HubAPIAddress != "" {
+			_ = h.store.SetSecret(ctx, "hub_api_address", []byte(wg.HubAPIAddress))
+		}
 	case store.InstallCombined:
 		if wg.HubEndpoint != "" && wg.HubPublicKey != "" {
 			if err := utils.AddPeer("wg0", wg.HubPublicKey, wg.HubEndpoint, wg.HubAllowedIPs, 25); err != nil {
 				return nil, fmt.Errorf("add hub as peer: %w", err)
 			}
+			hubAPIAddr := wg.HubAPIAddress
+			if hubAPIAddr == "" {
+				hubAPIAddr = wg.HubEndpoint
+			}
 			_ = h.store.CreateNode(ctx, store.NodeRecord{
 				ID: "hub", Name: "hub", Type: "hub",
-				Address: wg.HubEndpoint, PublicKey: wg.HubPublicKey,
+				Address: hubAPIAddr, PublicKey: wg.HubPublicKey,
 			})
 			_ = h.store.UpsertWGPeer(ctx, store.WGPeerRecord{
 				NodeID: "hub", Endpoint: wg.HubEndpoint, AllowedIPs: wg.HubAllowedIPs,
 			})
+			if wg.HubAPIAddress != "" {
+				_ = h.store.SetSecret(ctx, "hub_api_address", []byte(wg.HubAPIAddress))
+			}
 		}
 	}
 
