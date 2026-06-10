@@ -134,16 +134,18 @@
             <input v-model="enrollForm.pubkey" class="form-input font-mono" placeholder="Base64-encoded WireGuard public key" />
           </div>
           <div class="form-row">
-            <label class="form-label">Remote node's endpoint <span class="form-label-hint">(host:port, if reachable)</span></label>
+            <label class="form-label">Remote node's endpoint <span class="form-label-hint">(host:port)</span></label>
             <input v-model="enrollForm.endpoint" class="form-input font-mono" placeholder="1.2.3.4:51820" />
+            <p class="form-hint">The node's current WireGuard UDP endpoint. WireGuard's keepalive will keep this up to date automatically once the peer connects — you only need a reachable initial value here.</p>
           </div>
           <div class="form-row">
             <label class="form-label">Allowed IPs</label>
             <input v-model="enrollForm.allowedIPs" class="form-input font-mono" placeholder="10.102.132.2/32" />
           </div>
           <div class="form-row">
-            <label class="form-label">API address <span class="form-label-hint">(host:port)</span></label>
-            <input v-model="enrollForm.apiAddress" class="form-input font-mono" placeholder="10.102.132.2:8086" />
+            <label class="form-label">API address <span class="form-label-hint">(optional)</span></label>
+            <input v-model="enrollForm.apiAddress" class="form-input font-mono" placeholder="auto-derived from Allowed IPs" />
+            <p class="form-hint">Leave blank to use the node's mesh IP from Allowed IPs. Only needed when the API runs on a different address.</p>
           </div>
           <div class="form-row">
             <label class="form-label">Role</label>
@@ -159,7 +161,7 @@
       <div class="modal__footer">
         <p v-if="enrollError" class="enroll-error">{{ enrollError }}</p>
         <button class="cancel-btn" @click="showEnroll = false">Cancel</button>
-        <button class="save-btn" @click="enroll" :disabled="enrollSaving || !enrollForm.pubkey || !enrollForm.endpoint || !enrollForm.name || !enrollForm.allowedIPs || !enrollForm.apiAddress">
+        <button class="save-btn" @click="enroll" :disabled="enrollSaving || !enrollForm.pubkey || !enrollForm.endpoint || !enrollForm.name || !enrollForm.allowedIPs">
           <Icon name="lucide:user-check" size="14" /> {{ enrollSaving ? 'Enrolling…' : 'Enroll Peer' }}
         </button>
       </div>
@@ -217,31 +219,31 @@ const enrollForm = reactive({ name: '', pubkey: '', endpoint: '', allowedIPs: ''
 
 async function copyKey(key: string, slot = 'local') {
   try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(key)
-    } else {
-      const el = document.createElement('textarea')
-      el.value = key
-      el.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
-      document.body.appendChild(el)
-      el.select()
-      document.execCommand('copy')
-      document.body.removeChild(el)
-    }
+    await navigator.clipboard.writeText(key)
     copied.value = slot
     setTimeout(() => { copied.value = null }, 2000)
   } catch {}
 }
 
+function meshIPFromAllowedIPs(allowedIPs: string): string {
+  const first = (allowedIPs.split(',')[0] ?? '').trim()
+  const slash = first.indexOf('/')
+  if (slash === -1) return first
+  const mask = first.slice(slash + 1)
+  if (mask !== '32' && mask !== '128') return ''
+  return first.slice(0, slash)
+}
+
 async function enroll() {
-  if (!enrollForm.pubkey || !enrollForm.endpoint || !enrollForm.name || !enrollForm.allowedIPs || !enrollForm.apiAddress) return
+  if (!enrollForm.pubkey || !enrollForm.endpoint || !enrollForm.name || !enrollForm.allowedIPs) return
   enrollError.value = ''
   enrollSaving.value = true
   try {
+    const address = enrollForm.apiAddress || meshIPFromAllowedIPs(enrollForm.allowedIPs)
     const node = await api.createNode({
       name:       enrollForm.name,
       type:       enrollForm.role,
-      address:    enrollForm.apiAddress,
+      address,
       public_key: enrollForm.pubkey,
     })
     await api.addPeer({

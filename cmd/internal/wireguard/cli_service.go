@@ -13,6 +13,10 @@ func (s *CLIService) UpdatePeerEndpoint(iface, publicKey, endpoint string) error
 	return utils.UpdatePeerEndpoint(iface, publicKey, endpoint)
 }
 
+func (s *CLIService) GetPeerEndpoint(iface, publicKey string) (string, error) {
+	return utils.GetPeerEndpoint(iface, publicKey)
+}
+
 func (s *CLIService) GetStatus(iface string) (string, error) {
 	return utils.GetStatus(iface)
 }

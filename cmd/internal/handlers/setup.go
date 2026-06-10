@@ -16,6 +16,7 @@ import (
 
 	"scutum/cmd/internal/auth"
 	"scutum/cmd/internal/kms"
+	"scutum/cmd/internal/roaming"
 	"scutum/cmd/internal/store"
 	"scutum/cmd/internal/utils"
 
@@ -458,12 +459,7 @@ func (h *SetupHandler) setupWireGuard(ctx context.Context, req setupRequest) (*w
 		if err := utils.AddPeer("wg0", wg.HubPublicKey, wg.HubEndpoint, wg.HubAllowedIPs, 25); err != nil {
 			return nil, fmt.Errorf("add hub as peer: %w", err)
 		}
-		// Store the hub's API address so registerOwnEndpoint can reach the HTTP API.
-		// Address here is the API host:port, not the WireGuard endpoint.
-		hubAPIAddr := wg.HubAPIAddress
-		if hubAPIAddr == "" {
-			hubAPIAddr = wg.HubEndpoint // best-effort fallback (likely wrong port)
-		}
+		hubAPIAddr := resolveHubAPIAddr(wg)
 		_ = h.store.CreateNode(ctx, store.NodeRecord{
 			ID: "hub", Name: "hub", Type: "hub",
 			Address: hubAPIAddr, PublicKey: wg.HubPublicKey,
@@ -479,10 +475,7 @@ func (h *SetupHandler) setupWireGuard(ctx context.Context, req setupRequest) (*w
 			if err := utils.AddPeer("wg0", wg.HubPublicKey, wg.HubEndpoint, wg.HubAllowedIPs, 25); err != nil {
 				return nil, fmt.Errorf("add hub as peer: %w", err)
 			}
-			hubAPIAddr := wg.HubAPIAddress
-			if hubAPIAddr == "" {
-				hubAPIAddr = wg.HubEndpoint
-			}
+			hubAPIAddr := resolveHubAPIAddr(wg)
 			_ = h.store.CreateNode(ctx, store.NodeRecord{
 				ID: "hub", Name: "hub", Type: "hub",
 				Address: hubAPIAddr, PublicKey: wg.HubPublicKey,
@@ -504,6 +497,27 @@ func (h *SetupHandler) setupWireGuard(ctx context.Context, req setupRequest) (*w
 		res.ListenPort = cfg.Port
 	}
 	return res, nil
+}
+
+// resolveHubAPIAddr determines the address the node should use to reach the
+// hub's HTTP API. The preference order is:
+//
+//  1. Explicit HubAPIAddress provided by the operator — used as-is.
+//  2. Hub's WireGuard mesh IP derived from HubAllowedIPs (only when it is a
+//     single-host /32 or /128 route). Using the mesh IP means all API traffic
+//     stays inside the encrypted WireGuard tunnel, and WireGuard's built-in
+//     persistent-keepalive handles NAT roaming without any application-layer
+//     re-registration loop.
+//  3. HubEndpoint as a last resort (this is the WireGuard UDP endpoint and
+//     almost certainly has the wrong port, but it is better than nothing).
+func resolveHubAPIAddr(wg wireguardConfig) string {
+	if wg.HubAPIAddress != "" {
+		return wg.HubAPIAddress
+	}
+	if meshIP := roaming.HubMeshIP(wg.HubAllowedIPs); meshIP != "" {
+		return meshIP
+	}
+	return wg.HubEndpoint
 }
 
 func validateWireGuardConfig(req setupRequest) error {

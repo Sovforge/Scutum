@@ -113,10 +113,10 @@
               <div class="form-row">
                 <label class="form-label">
                   Hub API address
-                  <span class="form-label-hint">(host:port of the hub's HTTP API)</span>
+                  <span class="form-label-hint">(optional)</span>
                 </label>
-                <input v-model="mesh.hubAPIAddress" class="form-input font-mono" placeholder="10.100.5.1:8080" />
-                <p class="form-hint">Used for NAT roaming — this node periodically registers its current WireGuard endpoint with the hub API. Typically the hub's mesh IP and port.</p>
+                <input v-model="mesh.hubAPIAddress" class="form-input font-mono" placeholder="auto-derived from Hub allowed IPs" />
+                <p class="form-hint">Leave blank to use the hub's mesh IP derived from Hub allowed IPs (recommended). Fill in only when the hub runs its API on a different address. NAT roaming is handled automatically by WireGuard's built-in keepalive — no periodic re-registration needed.</p>
               </div>
               <div class="form-row">
                 <label class="form-label">
