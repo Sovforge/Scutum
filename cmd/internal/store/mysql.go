@@ -44,6 +44,9 @@ func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN trace_id VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN span_id VARCHAR(32) NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN attributes JSON`,
+		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN disabled TINYINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN email VARCHAR(255)`,
 		// otel_metrics table (MySQL runs one statement at a time)
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
 			id         VARCHAR(255) PRIMARY KEY,
@@ -66,7 +69,7 @@ const mysqlSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
     id          VARCHAR(255) PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
-    type        ENUM('hub', 'remote', 'combined') NOT NULL,
+    type        ENUM('hub', 'remote') NOT NULL,
     address     VARCHAR(255) NOT NULL,
     public_key  TEXT NOT NULL,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -233,5 +236,75 @@ CREATE TABLE IF NOT EXISTS hub_leases (
     holder_id  VARCHAR(255) NOT NULL,
     expires_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS federation_peers (
+    id            VARCHAR(36) PRIMARY KEY,
+    name          VARCHAR(255) NOT NULL,
+    hub_url       TEXT NOT NULL,
+    wg_endpoint   VARCHAR(255) NOT NULL,
+    wg_public_key VARCHAR(255) NOT NULL,
+    mesh_cidr     VARCHAR(64) NOT NULL,
+    allowed_ips   TEXT NOT NULL DEFAULT '',
+    status        VARCHAR(32) NOT NULL DEFAULT 'pending',
+    last_seen     TIMESTAMP NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS node_labels (
+    node_id   VARCHAR(36) NOT NULL,
+    label_key VARCHAR(255) NOT NULL,
+    value     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (node_id, label_key)
+);
+
+CREATE TABLE IF NOT EXISTS node_groups (
+    id          VARCHAR(36) PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS webhook_configs (
+    id         VARCHAR(36) PRIMARY KEY,
+    name       VARCHAR(255) NOT NULL,
+    url        TEXT NOT NULL,
+    secret     TEXT NOT NULL DEFAULT '',
+    events     TEXT NOT NULL DEFAULT '[]',
+    enabled    TINYINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scim_tokens (
+    id          VARCHAR(36) PRIMARY KEY,
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS node_group_members (
+    group_id VARCHAR(36) NOT NULL,
+    node_id  VARCHAR(36) NOT NULL,
+    PRIMARY KEY (group_id, node_id)
+);
+
+CREATE TABLE IF NOT EXISTS audit_forwarders (
+    id         VARCHAR(36) PRIMARY KEY,
+    name       VARCHAR(255) NOT NULL,
+    url        TEXT NOT NULL,
+    format     VARCHAR(16) NOT NULL DEFAULT 'json',
+    enabled    TINYINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sso_identities (
+    id         VARCHAR(255) PRIMARY KEY,
+    user_id    VARCHAR(255) NOT NULL,
+    provider   VARCHAR(100) NOT NULL,
+    subject    VARCHAR(255) NOT NULL,
+    email      VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(provider, subject),
+    CONSTRAINT fk_sso_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
 `

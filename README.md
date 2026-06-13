@@ -23,6 +23,8 @@
 <summary><b>📖 Table of Contents</b> (click to expand)</summary>
 
 - [⚡ Quick Start](#the-2-node-quick-start-under-60-seconds)
+- [☸️ Kubernetes / Helm](#kubernetes--helm)
+- [⚙️ Kubernetes Operator](#kubernetes-operator)
 - [🌐 Overview](#overview)
 - [🧩 Core Concepts](#core-concepts)
 - [🏗️ Architecture](#architecture)
@@ -32,6 +34,13 @@
 - [🚀 Getting Started](#getting-started)
   - [Running Outside Docker (Advanced)](#running-outside-docker-advanced)
 - [🛡️ The Scutum Advantage](#the-sovereign-advantage)
+- [🔗 Hub Federation](#hub-federation)
+- [🏷️ Node Groups and Labels](#node-groups-and-labels)
+- [📋 CRA Compliance Report](#cra-compliance-report)
+- [🔔 Webhook Notifications](#webhook-notifications)
+- [🔗 SCIM 2.0 Provisioning](#scim-20-provisioning)
+- [📤 Audit Log Forwarding](#audit-log-forwarding)
+- [🔐 Single Sign-On (SSO)](#single-sign-on-sso)
 - [🔌 Plugin System](#plugin-system)
 - [📡 API Quick Reference](#api-quick-reference)
 - [🗺️ Roadmap](#roadmap)
@@ -70,7 +79,19 @@ rm secrets/server.csr secrets/ca.srl
 chmod 600 secrets/*.key
 ```
 
-> **Tip:** Replace `IP:127.0.0.1` with your VPS's public IP so browsers trust the cert without a warning. For production, use a cert from Let's Encrypt or your own CA.
+> **Tip:** Replace `IP:127.0.0.1` with your VPS's public IP so browsers trust the cert without a warning. For production, use automatic TLS below.
+
+#### Automatic TLS (ACME / Let's Encrypt)
+
+Skip the manual cert generation entirely by setting three environment variables:
+
+```bash
+ACME_DOMAIN=scutum.example.com   # your public hostname
+ACME_EMAIL=admin@example.com     # used for expiry notifications
+# ACME_STAGING=true              # uncomment to use LE staging while testing
+```
+
+Scutum will provision and auto-renew a trusted certificate from Let's Encrypt on first start. Port 80 must be reachable from the internet for the HTTP-01 challenge. All plain-HTTP requests are automatically redirected to HTTPS.
 
 ---
 
@@ -152,6 +173,156 @@ Within minutes, both nodes should appear connected in the UI and begin routing t
 
 * A private encrypted network between your machines — no exposed ports, no third-party control plane
 * Docker and Kubernetes actions from the hub UI forwarded to any registered node via `X-Target-Node` header
+
+---
+
+---
+
+## ☸️ Kubernetes / Helm
+
+Scutum ships a production-ready Helm chart (`helm/scutum`) that deploys as a **StatefulSet** with two services: a `ClusterIP` for the API/UI and a `LoadBalancer` for the WireGuard UDP port (so remote nodes can reach the mesh hub).
+
+### Prerequisites
+
+- Kubernetes 1.27+
+- Helm 3.10+
+- A LoadBalancer provider **or** use `service.wireguard.type: NodePort` for bare-metal
+
+### Quickstart
+
+```bash
+# 1. Install (self-signed TLS cert generated automatically on first start)
+helm install scutum ./helm/scutum \
+  --namespace scutum --create-namespace
+
+# 2. Get the API URL
+kubectl get svc scutum -n scutum
+
+# 3. Get the WireGuard endpoint (share with remote nodes)
+kubectl get svc scutum-wireguard -n scutum
+```
+
+Open `https://<LoadBalancer-IP>:8080` and complete the setup wizard.
+
+### Common value overrides
+
+```yaml
+# values-production.yaml
+
+# Use an existing PostgreSQL database (required for replica count > 1)
+database:
+  url: "postgres://scutum:password@postgres:5432/scutum"
+
+replicaCount: 3
+
+# Attach to a Gateway API gateway instead of using direct LoadBalancer
+gateway:
+  enabled: true
+  name: prod-gateway
+  hostnames:
+    - scutum.example.com
+
+# Enable Docker socket mount on nodes that run Docker (not containerd)
+docker:
+  enabled: true
+
+# Bring your own TLS certificate (e.g. from cert-manager)
+tls:
+  autoGenerate: false
+  existingSecret: scutum-tls  # kubernetes.io/tls secret
+```
+
+```bash
+helm upgrade --install scutum ./helm/scutum \
+  --namespace scutum --create-namespace \
+  -f values-production.yaml
+```
+
+### Notes
+
+| Concern | Detail |
+|---|---|
+| **WireGuard** | Requires `NET_ADMIN` capability and the kernel WireGuard module (built-in since kernel 5.6). The chart adds these automatically. |
+| **HA (replicas > 1)** | Requires an external database (`database.url`). SQLite is single-writer only. |
+| **Docker features** | Disabled by default. Set `docker.enabled: true` only on nodes where Docker (not containerd) is the runtime — the socket is mounted as a `hostPath`. |
+| **NAT roaming** | Edge nodes (e.g. laptops) re-register their WireGuard endpoint with the hub every 2 minutes, so the tunnel recovers automatically after a network change without a restart. |
+| **Hub-and-spoke routing** | For two edge nodes behind different NATs to reach each other, configure their WireGuard `AllowedIPs` to include the full mesh CIDR — traffic is relayed through the hub. |
+
+### Running the tests
+
+```bash
+# Helm render tests (no cluster required)
+./helm/scutum/tests/render_test.sh
+
+# Full integration test using kind
+./scripts/test-k8s.sh
+
+# Keep the cluster after the test for inspection
+./scripts/test-k8s.sh --keep
+```
+
+---
+
+## ⚙️ Kubernetes Operator
+
+The Scutum operator manages hub and edge deployments as first-class Kubernetes resources using two CRDs: `ScutumHub` and `ScutumNode`. The hub controller reconciles StatefulSets, Services, and RBAC; the node controller auto-enrolls edges into the mesh via the hub API and writes a per-node `bootstrap` Secret containing WireGuard config and HMAC credentials.
+
+### Install the CRDs and RBAC
+
+```bash
+kubectl apply -f operator/config/crd/
+kubectl apply -f operator/config/rbac/
+```
+
+### Deploy a hub
+
+```yaml
+apiVersion: scutum.io/v1alpha1
+kind: ScutumHub
+metadata:
+  name: hub
+  namespace: scutum
+spec:
+  image:
+    repository: ghcr.io/sovforge/scutum
+    tag: latest
+  adminSecret: scutum-admin-creds   # Secret with keys: username, password
+  storage:
+    size: 5Gi
+  wireGuard:
+    port: 51820
+```
+
+### Enroll an edge node
+
+```yaml
+apiVersion: scutum.io/v1alpha1
+kind: ScutumNode
+metadata:
+  name: edge-london
+  namespace: scutum
+spec:
+  hubRef:
+    name: hub
+    namespace: scutum
+  nodeName: edge-london
+  nodeType: remote
+  image:
+    repository: ghcr.io/sovforge/scutum
+    tag: latest
+```
+
+The operator reads hub credentials from the `ScutumHub`'s `adminSecret`, calls `GET /api/operator/bootstrap` to fetch mesh parameters, creates the node via the enrollment API, and writes a `<name>-bootstrap` Secret the edge pod mounts at startup.
+
+### Status fields
+
+Once reconciled, both resources expose status:
+
+```bash
+kubectl get scutumhub hub -n scutum -o wide
+kubectl get scutumnode edge-london -n scutum -o wide
+# PHASE column shows: Pending → Provisioning → Ready
+```
 
 ---
 
@@ -300,6 +471,10 @@ Environment variables:
 | `CERT_FILE` | `$SECRETS_DIR/server.crt` | Path to the TLS certificate |
 | `KEY_FILE` | `$SECRETS_DIR/server.key` | Path to the TLS private key |
 | `CA_CERT_FILE` | *(unset)* | Path to a CA certificate to enable mTLS client verification |
+| `ACME_DOMAIN` | *(unset)* | Enable Let's Encrypt auto-TLS for this domain (disables manual cert) |
+| `ACME_EMAIL` | *(unset)* | Contact email for Let's Encrypt expiry notifications |
+| `ACME_STAGING` | `false` | Use Let's Encrypt staging environment |
+| `ACME_CACHE_DIR` | `$SECRETS_DIR/acme` | Directory for cached ACME certificates |
 | `AUDIT_ENABLED` | `false` | Set to `true` to enable the security audit log |
 | `AUDIT_RETENTION_DAYS` | `365` | Days to retain audit log entries (CRA recommends ≥ 1 year) |
 | `HEALER_INTERVAL` | `30s` | How often the mesh healer reconciles peer state (Go duration string) |
@@ -315,6 +490,215 @@ Environment variables:
 | **Networking** | Public Relays / Exit Nodes | **Private P2P WireGuard Mesh** |
 | **Observability** | Third-party Ingestion | **Local OpenTelemetry Streams** |
 | **Dependency** | Internet Required | **Fully Air-Gap Capable** |
+
+---
+
+## 🔗 Hub Federation
+
+Connect two independent Scutum instances so nodes in each mesh can route to nodes in the other. Federation adds a WireGuard peer between the two hub interfaces and installs the remote mesh CIDR as an allowed route.
+
+```bash
+# On hub-A: add hub-B as a federation peer
+curl -X POST /api/federation/peers \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "name": "hub-b",
+    "wg_endpoint": "203.0.113.10:51820",
+    "wg_public_key": "<hub-B public key>",
+    "mesh_cidr": "10.200.0.0/24"
+  }'
+# Repeat symmetrically on hub-B pointing at hub-A
+```
+
+Once both sides have each other registered, WireGuard routes traffic across the tunnel automatically. `GET /api/federation/peers` shows live status.
+
+---
+
+## 🏷️ Node Groups and Labels
+
+Organise nodes with free-form labels and named groups for targeting bulk operations.
+
+```bash
+# Tag a node
+curl -X PUT /api/nodes/<id>/labels \
+  -H "Authorization: Bearer <token>" \
+  -d '{"env":"prod","region":"eu-west"}'
+
+# Create a group and add members
+curl -X POST /api/groups -d '{"name":"prod-eu","description":"EU production nodes"}'
+curl -X POST /api/groups/<group-id>/members -d '{"node_id":"<node-id>"}'
+
+# List nodes in a group
+curl /api/groups/<group-id>/nodes
+```
+
+---
+
+## 📋 CRA Compliance Report
+
+Generate a structured compliance report aligned with the **EU Cyber Resilience Act (CRA) 2024/2847**.
+
+```bash
+# JSON report (default) — download and archive
+curl /api/compliance/report -H "Authorization: Bearer <admin-token>" \
+  -o cra-report.json
+
+# CSV audit log export — import into a SIEM or spreadsheet
+curl "/api/compliance/report?format=csv" -H "Authorization: Bearer <admin-token>" \
+  -o audit-log.csv
+
+# Human-readable text summary
+curl "/api/compliance/report?format=text" -H "Authorization: Bearer <admin-token>"
+```
+
+The report covers:
+
+| Section | Contents |
+|---|---|
+| **Users** | All accounts and creation timestamps |
+| **Mesh** | Node inventory with type and address |
+| **Audit summary** | Event counts by action and outcome, failed logins, permission denials |
+| **Security** | Encryption algorithms, auth methods, rate limiting status, audit retention |
+| **Key management** | Hub HMAC key and WireGuard config presence |
+| **Incidents** | All failed/denied audit events with actor, IP, and path |
+## 🔔 Webhook Notifications
+
+Scutum can POST a signed JSON payload to any HTTP endpoint when key mesh events occur.
+
+### Supported events
+
+| Event | Trigger |
+|---|---|
+| `node.enrolled` | A new node is approved and added to the mesh |
+| `node.offline` | The healer marks a node as unreachable |
+| `node.online` | A previously offline node recovers |
+| `healer.service_restart` | The healer restarts a failing service |
+| `audit.critical` | A critical-severity audit event is logged |
+| `user.created` | A new user account is created |
+| `auth.sso_login` | A user authenticates via SSO |
+
+### Payload format
+
+```json
+{
+  "type": "node.enrolled",
+  "timestamp": "2026-05-29T12:00:00Z",
+  "payload": { "node_id": "...", "name": "edge-london" }
+}
+```
+
+### Signature verification
+
+Every delivery includes `X-Scutum-Signature: sha256=<hex>` computed as HMAC-SHA256 of the raw body using the webhook secret. Verify it on your receiver to confirm authenticity.
+
+### Managing webhooks
+
+```bash
+# Create a webhook (subscribe to all node events)
+curl -X POST /api/webhooks \
+  -H "Authorization: Bearer <token>" \
+  -d '{"name":"Slack","url":"https://hooks.slack.com/...","secret":"s3cr3t","events":["node.enrolled","node.offline"]}'
+
+# Test delivery immediately
+curl -X POST /api/webhooks/<id>/test -H "Authorization: Bearer <token>"
+```
+
+---
+
+## 🔗 SCIM 2.0 Provisioning
+
+Scutum implements SCIM 2.0 (RFC 7644) at `/scim/v2/`, enabling automatic user provisioning and deprovisioning from any compatible IdP (Microsoft Entra ID, Okta, JumpCloud).
+
+### Generate a SCIM token
+
+```bash
+curl -X POST /api/scim/tokens \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -d '{"description":"Entra ID provisioning"}'
+# Returns: {"id":"...","token":"<raw-token>"}  ← copy the token, it won't be shown again
+```
+
+### Configure in Microsoft Entra ID
+
+1. Enterprise Applications → your app → **Provisioning** → **Automatic**
+2. **Tenant URL**: `https://scutum.example.com/scim/v2`
+3. **Secret token**: the token returned above
+4. Save and click **Test Connection**
+
+### Supported operations
+
+| Operation | Behaviour |
+|---|---|
+| Create user | New account created; random password set (SSO login recommended) |
+| Update user | Username and email updated |
+| Deactivate (`active: false`) | Account disabled — login rejected |
+| Delete user | Account permanently removed |
+
+---
+
+## 📤 Audit Log Forwarding
+
+Forward audit log entries to an external SIEM or log aggregator every 30 seconds.
+
+### Supported formats
+
+| Format | Use case |
+|---|---|
+| `json` | Generic — works with Elastic, Loki, Splunk HEC, any HTTP receiver |
+| `cef` | ArcSight CEF — compatible with IBM QRadar, HP ArcSight |
+
+### Configure a forwarder
+
+```bash
+curl -X POST /api/audit/forwarders \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -d '{"name":"Elastic","url":"https://elastic.example.com/scutum-audit","format":"json"}'
+```
+
+Scutum will POST a batch of up to 500 recent audit entries to the URL every 30 seconds. Toggle forwarders on/off with `PUT /api/audit/forwarders/{id}` setting `"enabled": false`.
+## 🔐 Single Sign-On (SSO)
+
+Scutum supports OIDC/OAuth2 login via external identity providers. Providers only appear on the login page when they are configured — unconfigured providers are invisible to users.
+
+### Supported providers
+
+| Provider | Protocol | Environment variables |
+|---|---|---|
+| **Microsoft Entra ID** (Azure AD / Office 365) | OIDC | `SSO_MICROSOFT_CLIENT_ID`, `SSO_MICROSOFT_CLIENT_SECRET`, `SSO_MICROSOFT_TENANT_ID` |
+| **GitHub** | OAuth2 | `SSO_GITHUB_CLIENT_ID`, `SSO_GITHUB_CLIENT_SECRET` |
+| **Authentik** | OIDC | `SSO_AUTHENTIK_CLIENT_ID`, `SSO_AUTHENTIK_CLIENT_SECRET`, `SSO_AUTHENTIK_ISSUER_URL` |
+| **Keycloak** | OIDC | `SSO_KEYCLOAK_CLIENT_ID`, `SSO_KEYCLOAK_CLIENT_SECRET`, `SSO_KEYCLOAK_ISSUER_URL` |
+| **Generic OIDC** | OIDC | `SSO_OIDC_CLIENT_ID`, `SSO_OIDC_CLIENT_SECRET`, `SSO_OIDC_ISSUER_URL`, `SSO_OIDC_NAME` |
+
+### Setup example — Microsoft Entra ID
+
+1. Register an app in [Azure Portal](https://portal.azure.com) → **App registrations → New registration**
+2. Set redirect URI to `https://<your-scutum-host>/api/auth/sso/microsoft/callback`
+3. Create a client secret under **Certificates & secrets**
+4. Set environment variables:
+
+```bash
+SSO_MICROSOFT_CLIENT_ID=<Application (client) ID>
+SSO_MICROSOFT_CLIENT_SECRET=<client secret value>
+SSO_MICROSOFT_TENANT_ID=<Directory (tenant) ID>   # or "common" for any Microsoft account
+SSO_REDIRECT_BASE_URL=https://scutum.example.com
+```
+
+### Setup example — GitHub
+
+1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
+2. Set **Authorization callback URL** to `https://<your-scutum-host>/api/auth/sso/github/callback`
+3. Set environment variables:
+
+```bash
+SSO_GITHUB_CLIENT_ID=<Client ID>
+SSO_GITHUB_CLIENT_SECRET=<Client secret>
+SSO_REDIRECT_BASE_URL=https://scutum.example.com
+```
+
+### Account linking
+
+On first SSO login, Scutum links the identity to an existing local account by email, or creates a new account automatically. Subsequent logins use the provider's subject ID for fast lookup.
 
 ---
 
@@ -362,8 +746,9 @@ All endpoints are served under `/api/`. Requests to authenticated routes require
 
 | Feature | Status |
 | :--- | :--- |
-| **Single Sign-On (OIDC / SAML)** — Keycloak, Okta, GitHub, Azure AD | 🔜 Planned |
-| **Helm chart & Kubernetes operator** — first-class K8s deployment | 🔜 Planned |
+| **Single Sign-On (OIDC)** — Microsoft, GitHub, Authentik, Keycloak | ✅ Shipped |
+| **Helm chart** — first-class Kubernetes deployment | ✅ Shipped |
+| **Kubernetes operator** — CRD-based cluster management | ✅ Shipped |
 
 Have a feature request? Open an issue or start a discussion.
 

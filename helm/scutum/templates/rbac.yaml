@@ -1,0 +1,65 @@
+{{- if and .Values.serviceAccount.create .Values.rbac.create -}}
+---
+## Scutum manages Kubernetes resources (Deployments, Services, etc.) on behalf
+## of its users. It uses the in-cluster service account, so these permissions
+## must reflect the operations you intend to allow via the UI.
+## Scope to a single namespace by changing ClusterRole → Role and
+## ClusterRoleBinding → RoleBinding if you prefer namespace isolation.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "scutum.fullname" . }}
+  labels:
+    {{- include "scutum.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - pods/log
+      - pods/exec
+      - services
+      - endpoints
+      - persistentvolumeclaims
+      - configmaps
+      - secrets
+      - serviceaccounts
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - pods
+      - nodes
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "scutum.fullname" . }}
+  labels:
+    {{- include "scutum.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "scutum.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "scutum.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

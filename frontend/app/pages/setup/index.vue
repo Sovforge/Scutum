@@ -112,6 +112,14 @@
               </div>
               <div class="form-row">
                 <label class="form-label">
+                  Hub API address
+                  <span class="form-label-hint">(optional)</span>
+                </label>
+                <input v-model="mesh.hubAPIAddress" class="form-input font-mono" placeholder="auto-derived from Hub allowed IPs" />
+                <p class="form-hint">Leave blank to use the hub's mesh IP derived from Hub allowed IPs (recommended). Fill in only when the hub runs its API on a different address. NAT roaming is handled automatically by WireGuard's built-in keepalive — no periodic re-registration needed.</p>
+              </div>
+              <div class="form-row">
+                <label class="form-label">
                   Hub proxy key
                   <span class="form-label-hint">(from hub's Enroll Peer dialog)</span>
                 </label>
@@ -392,9 +400,14 @@
               <div v-for="(share, i) in recoveryShares" :key="i" class="share-card">
                 <div class="share-card__header">
                   <span class="share-card__label">Share {{ i + 1 }} of {{ recoveryShares.length }}</span>
-                  <button class="share-card__copy" :class="{ copied: copiedIndex === i }" @click="copyShare(share, i)" title="Copy">
-                    <Icon :name="copiedIndex === i ? 'lucide:check' : 'lucide:copy'" size="12" />
-                  </button>
+                  <div class="share-card__actions">
+                    <button class="share-card__copy" :class="{ copied: copiedIndex === i }" @click="copyShare(share, i)" title="Copy to clipboard">
+                      <Icon :name="copiedIndex === i ? 'lucide:check' : 'lucide:copy'" size="12" />
+                    </button>
+                    <button class="share-card__usb" @click="exportShareToUsb(share, i + 1, recoveryShares.length)" title="Save to USB / IronKey">
+                      <Icon name="lucide:usb" size="12" />
+                    </button>
+                  </div>
                 </div>
                 <div class="share-card__value font-mono">{{ share }}</div>
               </div>
@@ -615,10 +628,11 @@ const mesh = reactive({
   address:       randomMeshAddress(),
   listenPort:    51820,
   mtu:           0,
-  hubEndpoint:   '',
-  hubPublicKey:  '',
-  hubAllowedIPs: '',
-  hubHMACKey:    '',
+  hubEndpoint:    '',
+  hubPublicKey:   '',
+  hubAllowedIPs:  '',
+  hubHMACKey:     '',
+  hubAPIAddress:  '',
 })
 
 // When role changes, reset address and re-derive allowedIPs
@@ -683,10 +697,11 @@ function buildPayload(): SetupRequest {
       address:         mesh.address,
       listen_port:     mesh.installType !== 'remote' ? mesh.listenPort : undefined,
       mtu:             mesh.mtu > 0 ? mesh.mtu : undefined,
-      hub_endpoint:    mesh.installType !== 'hub' && mesh.hubEndpoint   ? mesh.hubEndpoint   : undefined,
-      hub_public_key:  mesh.installType !== 'hub' && mesh.hubPublicKey  ? mesh.hubPublicKey  : undefined,
-      hub_allowed_ips: mesh.installType !== 'hub' && mesh.hubAllowedIPs ? mesh.hubAllowedIPs : undefined,
-      hub_hmac_key:    mesh.installType !== 'hub' && mesh.hubHMACKey    ? mesh.hubHMACKey    : undefined,
+      hub_endpoint:     mesh.installType !== 'hub' && mesh.hubEndpoint    ? mesh.hubEndpoint    : undefined,
+      hub_public_key:   mesh.installType !== 'hub' && mesh.hubPublicKey   ? mesh.hubPublicKey   : undefined,
+      hub_allowed_ips:  mesh.installType !== 'hub' && mesh.hubAllowedIPs  ? mesh.hubAllowedIPs  : undefined,
+      hub_hmac_key:     mesh.installType !== 'hub' && mesh.hubHMACKey     ? mesh.hubHMACKey     : undefined,
+      hub_api_address:  mesh.installType !== 'hub' && mesh.hubAPIAddress  ? mesh.hubAPIAddress  : undefined,
     },
     admin:    { username: admin.username, password: admin.password },
     recovery: kms.provider === 'local' ? { n_shares: recovery.n, threshold: recovery.t } : undefined,
@@ -713,10 +728,11 @@ async function submitRemote() {
       wireguard: {
         address:         mesh.address,
         mtu:             mesh.mtu > 0 ? mesh.mtu : undefined,
-        hub_endpoint:    mesh.hubEndpoint   || undefined,
-        hub_public_key:  mesh.hubPublicKey  || undefined,
-        hub_allowed_ips: mesh.hubAllowedIPs || undefined,
-        hub_hmac_key:    mesh.hubHMACKey    || undefined,
+        hub_endpoint:    mesh.hubEndpoint    || undefined,
+        hub_public_key:  mesh.hubPublicKey   || undefined,
+        hub_allowed_ips: mesh.hubAllowedIPs  || undefined,
+        hub_hmac_key:    mesh.hubHMACKey     || undefined,
+        hub_api_address: mesh.hubAPIAddress  || undefined,
       },
       admin: { username: '', password: '' },
     })
@@ -779,6 +795,28 @@ async function copyShare(share: string, index: number) {
     copiedIndex.value = index
     setTimeout(() => { copiedIndex.value = null }, 1800)
   } catch {}
+}
+
+async function exportShareToUsb(share: string, index: number, total: number) {
+  const filename = `scutum-erk-share-${index}-of-${total}.erk`
+  if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+    try {
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'Scutum ERK Share', accept: { 'text/plain': ['.erk'] } }],
+      })
+      const writable = await handle.createWritable()
+      await writable.write(share)
+      await writable.close()
+    } catch (e: any) { if (e.name !== 'AbortError') throw e }
+  } else {
+    const a = document.createElement('a')
+    a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(share)
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
 }
 
 const copiedPubkey = ref(false)
@@ -919,13 +957,16 @@ function goToLogin() {
   margin-bottom: 0.35rem;
 }
 .share-card__label { font-size: 0.68rem; color: var(--text-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-.share-card__copy {
+.share-card__actions { display: flex; align-items: center; gap: 0.25rem; }
+.share-card__copy, .share-card__usb {
   background: none; border: none; cursor: pointer; color: var(--text-muted);
   display: flex; padding: 0.15rem; border-radius: 0.2rem;
   transition: color 0.15s, background 0.15s;
 }
-.share-card__copy:hover { color: var(--text-primary); background: var(--hover-bg); }
+.share-card__copy:hover, .share-card__usb:hover { color: var(--text-primary); background: var(--hover-bg); }
 .share-card__copy.copied { color: var(--success-light); }
+.share-card__usb { color: var(--text-dim); }
+.share-card__usb:hover { color: var(--accent-light); }
 .share-card__value {
   font-size: 0.7rem; color: var(--text-secondary);
   word-break: break-all; line-height: 1.5;

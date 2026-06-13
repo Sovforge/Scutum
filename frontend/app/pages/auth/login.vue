@@ -91,6 +91,26 @@
         </button>
       </form>
 
+      <!-- SSO providers -->
+      <template v-if="ssoProviders.length > 0 && !totpRequired">
+        <div class="sso-divider">
+          <span class="sso-divider__line" />
+          <span class="sso-divider__text">or continue with</span>
+          <span class="sso-divider__line" />
+        </div>
+        <div class="sso-buttons">
+          <button
+            v-for="p in ssoProviders"
+            :key="p.id"
+            type="button"
+            class="sso-btn"
+            @click="loginSSO(p.id)"
+          >
+            <span class="sso-btn__icon" v-html="ssoIcon(p.icon)" />
+            <span>{{ p.name }}</span>
+          </button>
+        </div>
+      </template>
 
     </div>
 
@@ -98,17 +118,58 @@
 </template>
 
 <script setup lang="ts">
+import type { SSOProvider } from '~/composables/useApi'
+
 definePageMeta({ layout: 'auth' })
 
 const api  = useApi()
 const auth = useAuth()
 
 const form = reactive({ identity: '', password: '', remember: false })
-const loading     = ref(false)
-const error       = ref('')
-const showPw      = ref(false)
+const loading      = ref(false)
+const error        = ref('')
+const showPw       = ref(false)
 const totpRequired = ref(false)
-const totpCode    = ref('')
+const totpCode     = ref('')
+const ssoProviders = ref<SSOProvider[]>([])
+
+onMounted(async () => {
+  const hash = window.location.hash
+  if (hash.startsWith('#sso-token=')) {
+    const token = hash.slice('#sso-token='.length)
+    history.replaceState(null, '', window.location.pathname + window.location.search)
+    auth.setToken(token)
+    await navigateTo('/')
+    return
+  }
+  ssoProviders.value = await api.getSSOProviders()
+})
+
+function loginSSO(providerId: string) {
+  window.location.href = '/api/auth/sso/' + providerId
+}
+
+const ssoIconMap: Record<string, string> = {
+  microsoft: `<svg viewBox="0 0 21 21" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>`,
+  github: `<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`,
+}
+
+function ssoIcon(icon: string): string {
+  if (ssoIconMap[icon]) return ssoIconMap[icon]
+  const lucideMap: Record<string, string> = {
+    authentik: 'shield',
+    keycloak: 'key',
+    oidc: 'log-in',
+  }
+  const lucideName = lucideMap[icon] ?? 'log-in'
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">${lucidePaths[lucideName] ?? ''}</svg>`
+}
+
+const lucidePaths: Record<string, string> = {
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="M21 2l-9.6 9.6"/><path d="M15.5 7.5l3 3L22 7l-3-3"/>',
+  'log-in': '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>',
+}
 
 async function submit() {
   error.value = ''
@@ -361,6 +422,51 @@ async function submitTotp() {
   letter-spacing: 0.3em;
   font-family: monospace;
   max-width: 180px;
+}
+
+/* ── SSO ───────────────────────────────────────────────────────────────── */
+.sso-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.sso-divider__line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.sso-divider__text {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.sso-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.sso-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.375rem;
+  padding: 0.6rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  width: 100%;
+}
+.sso-btn:hover { background: var(--hover-bg); border-color: var(--accent); }
+.sso-btn__icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 /* ── Footer ────────────────────────────────────────────────────────────── */

@@ -1,0 +1,174 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: scutumhubs.scutum.io
+spec:
+  group: scutum.io
+  names:
+    kind: ScutumHub
+    listKind: ScutumHubList
+    plural: scutumhubs
+    singular: scutumhub
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Ready
+          type: boolean
+          jsonPath: .status.ready
+        - name: API Endpoint
+          type: string
+          jsonPath: .status.apiEndpoint
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - adminSecret
+              properties:
+                image:
+                  type: string
+                  default: "ghcr.io/sovforge/scutum:latest"
+                  description: "Container image for the hub."
+                replicas:
+                  type: integer
+                  format: int32
+                  description: "Number of hub replicas. Requires external database if > 1."
+                adminSecret:
+                  type: string
+                  description: "Name of K8s Secret with keys username and password for hub API auth."
+                database:
+                  type: object
+                  properties:
+                    existingSecret:
+                      type: string
+                      description: "Name of a Secret containing the DATABASE_URL key."
+                    existingSecretKey:
+                      type: string
+                      default: "DATABASE_URL"
+                      description: "Key within existingSecret that holds the database URL."
+                tls:
+                  type: object
+                  properties:
+                    autoGenerate:
+                      type: boolean
+                      default: true
+                      description: "Generate a self-signed TLS cert via init container."
+                    existingSecret:
+                      type: string
+                      description: "Name of a kubernetes.io/tls Secret with tls.crt and tls.key."
+                wireGuard:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                      description: "Enable WireGuard overlay on this hub."
+                    port:
+                      type: integer
+                      format: int32
+                      default: 51820
+                      description: "UDP listen port for WireGuard."
+                    serviceType:
+                      type: string
+                      default: LoadBalancer
+                      enum:
+                        - ClusterIP
+                        - NodePort
+                        - LoadBalancer
+                      description: "Service type for the WireGuard endpoint."
+                storage:
+                  type: object
+                  properties:
+                    dataSize:
+                      type: string
+                      default: "5Gi"
+                      description: "Size of the data PVC."
+                    secretsSize:
+                      type: string
+                      default: "256Mi"
+                      description: "Size of the secrets PVC."
+                    storageClass:
+                      type: string
+                      description: "StorageClass for both PVCs. Defaults to cluster default."
+                resources:
+                  type: object
+                  description: "Compute resource requirements for the hub container."
+                  properties:
+                    limits:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    requests:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                logLevel:
+                  type: string
+                  default: "info"
+                  description: "Application log level: debug, info, warn, error."
+                auditEnabled:
+                  type: boolean
+                  default: true
+                  description: "Enable CRA-compliant audit logging."
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: "True when the hub StatefulSet has at least one ready replica."
+                phase:
+                  type: string
+                  description: "Lifecycle phase: Pending, Running, or Error."
+                apiEndpoint:
+                  type: string
+                  description: "In-cluster HTTPS URL of the hub API."
+                wireGuardEndpoint:
+                  type: string
+                  description: "External IP:port for the WireGuard LoadBalancer Service."
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      reason:
+                        type: string
+                      status:
+                        type: string
+                      type:
+                        type: string
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  description: "Generation last processed by the controller."

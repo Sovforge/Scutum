@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 )
 
 type CommandRunner interface {
@@ -165,6 +166,32 @@ func GetDump(ifaceName string) (string, error) {
 	runner := DefaultCommandRunner
 	out, err := runner.Output("wg", "show", ifaceName, "dump")
 	return string(out), err
+}
+
+// GetPeerEndpoint returns the current endpoint recorded by WireGuard's kernel
+// state for the given peer. WireGuard updates this automatically whenever it
+// receives an authenticated packet from a new source address (e.g. after a
+// NAT roam), so this reflects the peer's real current address more accurately
+// than anything stored in the application database.
+//
+// Returns ("", nil) when the peer is known but has no endpoint yet (has never
+// connected). Returns an error when the peer is not found in the interface.
+func GetPeerEndpoint(ifaceName, publicKey string) (string, error) {
+	out, err := DefaultCommandRunner.Output("wg", "show", ifaceName, "endpoints")
+	if err != nil {
+		return "", fmt.Errorf("wg show endpoints: %w", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != publicKey {
+			continue
+		}
+		if fields[1] == "(none)" {
+			return "", nil
+		}
+		return fields[1], nil
+	}
+	return "", fmt.Errorf("peer not found in wg show endpoints")
 }
 
 func DeleteInterface(name string) error {

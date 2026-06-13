@@ -46,6 +46,9 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN span_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN attributes TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN email TEXT`,
 	} {
 		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
 	}
@@ -72,13 +75,13 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 			CREATE TABLE nodes (
 				id          TEXT PRIMARY KEY,
 				name        TEXT NOT NULL,
-				type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
+				type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 				address     TEXT NOT NULL,
 				public_key  TEXT NOT NULL,
 				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 			INSERT INTO nodes SELECT id, name,
-				CASE type WHEN 'peer' THEN 'remote' WHEN 'edge' THEN 'combined' ELSE type END,
+				CASE type WHEN 'peer' THEN 'remote' WHEN 'edge' THEN 'remote' WHEN 'combined' THEN 'remote' ELSE type END,
 				address, public_key, created_at FROM nodes_old;
 			DROP TABLE nodes_old;
 		`); err != nil {
@@ -93,7 +96,7 @@ const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
 			id          TEXT PRIMARY KEY,
 			name        TEXT NOT NULL,
-			type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
+			type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 			address     TEXT NOT NULL,
 			public_key  TEXT NOT NULL,
 			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -253,6 +256,75 @@ CREATE TABLE IF NOT EXISTS nodes (
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		-- single-row table enforced by constant primary key
 		id         INTEGER PRIMARY KEY CHECK(id = 1)
+	);
+
+	CREATE TABLE IF NOT EXISTS federation_peers (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		hub_url        TEXT NOT NULL,
+		wg_endpoint    TEXT NOT NULL,
+		wg_public_key  TEXT NOT NULL,
+		mesh_cidr      TEXT NOT NULL,
+		allowed_ips    TEXT NOT NULL DEFAULT '',
+		status         TEXT NOT NULL DEFAULT 'pending',
+		last_seen      DATETIME,
+		created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS node_labels (
+		node_id   TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		label_key TEXT NOT NULL,
+		value     TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (node_id, label_key)
+	);
+
+	CREATE TABLE IF NOT EXISTS node_groups (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL UNIQUE,
+		description TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS webhook_configs (
+		id         TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		url        TEXT NOT NULL,
+		secret     TEXT NOT NULL DEFAULT '',
+		events     TEXT NOT NULL DEFAULT '[]',
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS scim_tokens (
+		id          TEXT PRIMARY KEY,
+		token_hash  TEXT NOT NULL UNIQUE,
+		description TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS node_group_members (
+		group_id TEXT NOT NULL REFERENCES node_groups(id) ON DELETE CASCADE,
+		node_id  TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		PRIMARY KEY (group_id, node_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS audit_forwarders (
+		id         TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		url        TEXT NOT NULL,
+		format     TEXT NOT NULL DEFAULT 'json',
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS sso_identities (
+		id         TEXT PRIMARY KEY,
+		user_id    TEXT NOT NULL REFERENCES users(id),
+		provider   TEXT NOT NULL,
+		subject    TEXT NOT NULL,
+		email      TEXT,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(provider, subject)
 	);
 
 	PRAGMA journal_mode=WAL;

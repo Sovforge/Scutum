@@ -41,6 +41,14 @@ You may have "fair use" rights for the software under the law. These terms do no
 
 Use of the software for the benefit of your company is use for a permitted purpose if your company has fewer than 100 total individuals working as employees and independent contractors, and less than 1,000,000 USD (2019) total revenue in the prior tax year. Adjust this revenue threshold for inflation according to the United States Bureau of Labor Statistics' consumer price index for all urban consumers, U.S. city average, for all items, not seasonally adjusted, with 1982–1984=100 reference base.
 
+### Research and Private Use Exception
+
+The licensor additionally grants you a copyright and patent license for the software for the following permitted purposes:
+1. Any personal, non-commercial use by a private individual.
+2. Any academic, educational, or non-profit research use by an individual or entity.
+
+For these permitted purposes, the limitations defined in the [Small Business](#small-business) section (regarding employee count and revenue) do not apply.
+
 ### No Other Rights
 
 These terms do not allow you to sublicense or transfer any of your licenses to anyone else, or prevent the licensor from granting licenses to anyone else. These terms do not imply any other licenses.

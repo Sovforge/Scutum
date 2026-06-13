@@ -560,6 +560,15 @@ func (h *DockerHandler) HandleDeployCompose(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if _, err := exec.LookPath("docker"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "docker CLI not found in PATH; install docker on this node to use Compose deployments",
+		})
+		return
+	}
+
 	tmp, err := os.CreateTemp("", "compose-*.yml")
 	if err != nil {
 		http.Error(w, "create temp file", http.StatusInternalServerError)

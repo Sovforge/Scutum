@@ -21,6 +21,7 @@ export interface SetupRequest {
     hub_public_key?:  string
     hub_allowed_ips?: string
     hub_hmac_key?:    string
+    hub_api_address?: string
   }
   admin: { username: string; password: string }
   recovery?: { n_shares: number; threshold: number }
@@ -157,6 +158,12 @@ export interface MetricPoint {
   type:     string
   value:    number
   labels?:  Record<string, string>
+}
+
+export interface SSOProvider {
+  id:   string
+  name: string
+  icon: string
 }
 
 export interface GitSyncRequest {
@@ -482,6 +489,14 @@ export function useApi() {
     return $fetch<{ recovery_codes: string[] }>(`${BASE}/auth/recovery-codes/regenerate`, { method: 'POST', headers: h() })
   }
 
+  async function getSSOProviders(): Promise<SSOProvider[]> {
+    try {
+      return await $fetch<SSOProvider[]>(`${BASE}/auth/sso/providers`)
+    } catch {
+      return []
+    }
+  }
+
   async function forgotPassword(payload: {
     username: string
     new_password: string
@@ -491,10 +506,130 @@ export function useApi() {
     return $fetch<{ message: string }>(`${BASE}/auth/forgot-password`, { method: 'POST', body: payload })
   }
 
+  // ── Emergency Recovery Key (ERK) shares ────────────────────────────────────
+  async function erkGenerateShares(nShares: number, threshold: number): Promise<string[]> {
+    const res = await $fetch<{ shares: string[] }>(`${BASE}/recovery/generate-shares`, {
+      method: 'POST', body: { n_shares: nShares, threshold }, headers: h(),
+    })
+    return res.shares
+  }
+
+  async function erkReissueShares(shares: string[], nShares: number, threshold: number): Promise<string[]> {
+    const res = await $fetch<{ new_shares: string[] }>(`${BASE}/recovery/reissue-shares`, {
+      method: 'POST', body: { shares, n_shares: nShares, threshold }, headers: h(),
+    })
+    return res.new_shares
+  }
+
+  async function erkRecover(shares: string[], nShares: number, threshold: number): Promise<string[]> {
+    const res = await $fetch<{ new_shares: string[] }>(`${BASE}/recovery/recover`, {
+      method: 'POST', body: { shares, n_shares: nShares, threshold }, headers: h(),
+    })
+    return res.new_shares
+  }
+
   // ── Audit export ───────────────────────────────────────────────────────────
   function auditExportUrl(format: 'csv' | 'json' = 'csv', limit = 5000): string {
     const token = getToken()
     return `${BASE}/audit/logs/export?format=${format}&limit=${limit}&token=${encodeURIComponent(token)}`
+  }
+
+  // ── Federation ────────────────────────────────────────────────────────────
+  async function listFederationPeers() {
+    return $fetch<any[]>(`${BASE}/federation/peers`, { headers: h() })
+  }
+  async function createFederationPeer(data: any) {
+    return $fetch<any>(`${BASE}/federation/peers`, { method: 'POST', body: data, headers: h() })
+  }
+  async function deleteFederationPeer(id: string) {
+    await $fetch(`${BASE}/federation/peers/${id}`, { method: 'DELETE', headers: h() })
+  }
+
+  // ── Node groups ────────────────────────────────────────────────────────────
+  async function listNodeGroups() {
+    return $fetch<any[]>(`${BASE}/groups`, { headers: h() })
+  }
+  async function createNodeGroup(data: any) {
+    return $fetch<any>(`${BASE}/groups`, { method: 'POST', body: data, headers: h() })
+  }
+  async function deleteNodeGroup(id: string) {
+    await $fetch(`${BASE}/groups/${id}`, { method: 'DELETE', headers: h() })
+  }
+  async function getGroupNodes(groupId: string) {
+    return $fetch<any[]>(`${BASE}/groups/${groupId}/nodes`, { headers: h() })
+  }
+  async function addNodeToGroup(groupId: string, nodeId: string) {
+    await $fetch(`${BASE}/groups/${groupId}/members`, { method: 'POST', body: { node_id: nodeId }, headers: h() })
+  }
+  async function removeNodeFromGroup(groupId: string, nodeId: string) {
+    await $fetch(`${BASE}/groups/${groupId}/members/${nodeId}`, { method: 'DELETE', headers: h() })
+  }
+  async function getNodeLabels(nodeId: string) {
+    return $fetch<Record<string, string>>(`${BASE}/nodes/${nodeId}/labels`, { headers: h() })
+  }
+  async function setNodeLabels(nodeId: string, labels: Record<string, string>) {
+    return $fetch<Record<string, string>>(`${BASE}/nodes/${nodeId}/labels`, { method: 'PUT', body: labels, headers: h() })
+  }
+
+  // ── Compliance report ──────────────────────────────────────────────────────
+  async function downloadComplianceReport(format: 'json' | 'csv' | 'text') {
+    const res = await fetch(`${BASE}/compliance/report?format=${format}`, { headers: h() })
+    if (!res.ok) return
+    const blob = await res.blob()
+    const ext = format === 'json' ? 'json' : format === 'csv' ? 'csv' : 'txt'
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cra-compliance-report.${ext}`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // ── Webhooks ───────────────────────────────────────────────────────────────
+  async function listWebhooks() {
+    return $fetch<any[]>(`${BASE}/webhooks`, { headers: h() })
+  }
+  async function createWebhook(data: any) {
+    return $fetch<any>(`${BASE}/webhooks`, { method: 'POST', body: data, headers: h() })
+  }
+  async function updateWebhook(id: string, data: any) {
+    return $fetch<any>(`${BASE}/webhooks/${id}`, { method: 'PUT', body: data, headers: h() })
+  }
+  async function deleteWebhook(id: string) {
+    await $fetch(`${BASE}/webhooks/${id}`, { method: 'DELETE', headers: h() })
+  }
+  async function testWebhook(id: string) {
+    await $fetch(`${BASE}/webhooks/${id}/test`, { method: 'POST', headers: h() })
+  }
+
+  // ── SCIM tokens ────────────────────────────────────────────────────────────
+  async function listSCIMTokens() {
+    return $fetch<any[]>(`${BASE}/scim/tokens`, { headers: h() })
+  }
+  async function createSCIMToken(description: string) {
+    return $fetch<{ id: string; token: string }>(`${BASE}/scim/tokens`, { method: 'POST', body: { description }, headers: h() })
+  }
+  async function deleteSCIMToken(id: string) {
+    await $fetch(`${BASE}/scim/tokens/${id}`, { method: 'DELETE', headers: h() })
+  }
+
+  // ── Audit forwarders ───────────────────────────────────────────────────────
+  async function listAuditForwarders() {
+    return $fetch<any[]>(`${BASE}/audit/forwarders`, { headers: h() })
+  }
+  async function createAuditForwarder(data: any) {
+    return $fetch<any>(`${BASE}/audit/forwarders`, { method: 'POST', body: data, headers: h() })
+  }
+  async function updateAuditForwarder(id: string, data: any) {
+    return $fetch<any>(`${BASE}/audit/forwarders/${id}`, { method: 'PUT', body: data, headers: h() })
+  }
+  async function deleteAuditForwarder(id: string) {
+    await $fetch(`${BASE}/audit/forwarders/${id}`, { method: 'DELETE', headers: h() })
+  }
+
+  // ── TLS mode ───────────────────────────────────────────────────────────────
+  async function getTLSMode(): Promise<{ mode: string; domain?: string; email?: string; staging?: boolean; cert_file?: string }> {
+    return $fetch(`${BASE}/system/tls-mode`)
   }
 
   // ── Database export ────────────────────────────────────────────────────────
@@ -523,5 +658,15 @@ export function useApi() {
     gitSync,
     getRecoveryCodeStatus, regenerateRecoveryCodes, forgotPassword, auditExportUrl,
     exportDatabase,
+    listFederationPeers, createFederationPeer, deleteFederationPeer,
+    listNodeGroups, createNodeGroup, deleteNodeGroup, getGroupNodes, addNodeToGroup, removeNodeFromGroup,
+    getNodeLabels, setNodeLabels,
+    downloadComplianceReport,
+    listWebhooks, createWebhook, updateWebhook, deleteWebhook, testWebhook,
+    listSCIMTokens, createSCIMToken, deleteSCIMToken,
+    listAuditForwarders, createAuditForwarder, updateAuditForwarder, deleteAuditForwarder,
+    getSSOProviders,
+    getTLSMode,
+    erkGenerateShares, erkReissueShares, erkRecover,
   }
 }

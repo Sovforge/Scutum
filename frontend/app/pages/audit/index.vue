@@ -13,6 +13,12 @@
         <a :href="api.auditExportUrl('json')" download class="action-btn">
           <Icon name="lucide:file-json" size="13" /> Export JSON
         </a>
+        <div class="report-group">
+          <span class="report-label">CRA Report</span>
+          <button class="action-btn action-btn--report" @click="api.downloadComplianceReport('json')">JSON</button>
+          <button class="action-btn action-btn--report" @click="api.downloadComplianceReport('csv')">CSV</button>
+          <button class="action-btn action-btn--report" @click="api.downloadComplianceReport('text')">Text</button>
+        </div>
         <button class="action-btn" :disabled="loading" @click="load">
           <Icon name="lucide:refresh-cw" size="13" :class="{ spin: loading }" /> Refresh
         </button>
@@ -240,4 +246,8 @@ onMounted(load)
 
 .spin { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.report-group { display: flex; align-items: center; gap: 0.25rem; padding-left: 0.5rem; border-left: 1px solid var(--border); }
+.report-label { font-size: 0.72rem; color: var(--text-dim); margin-right: 0.25rem; white-space: nowrap; }
+.action-btn--report { padding: 0.35rem 0.5rem; font-size: 0.72rem; }
 </style>

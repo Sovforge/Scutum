@@ -1,0 +1,198 @@
+## Scutum Helm Chart values
+## Ref: https://github.com/sovforge/scutum
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/sovforge/scutum
+  pullPolicy: IfNotPresent
+  # Overrides the chart appVersion when set
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+## Application configuration (maps to env vars)
+config:
+  port: "8080"
+  logLevel: info
+  auditEnabled: "true"
+  auditRetentionDays: "365"
+  healerInterval: 30s
+  dataDir: /data
+  secretsDir: /secrets
+  # pluginsDir: /app/plugins
+
+## External database URL. Leave empty to use SQLite stored in the data PVC.
+## Required if replicaCount > 1.
+## Example: postgres://user:pass@postgres-svc:5432/scutum
+database:
+  url: ""
+  # existingSecret: ""
+  # existingSecretKey: DATABASE_URL
+
+## TLS certificate configuration.
+## The application serves HTTPS when certs are present; plain HTTP otherwise.
+tls:
+  # Spin up an init container that generates a self-signed cert on first run.
+  # Certs are written to the secrets volume and reused across restarts.
+  autoGenerate: true
+
+  # To supply your own certs, disable autoGenerate and set existingSecret.
+  # The secret must contain keys tls.crt and tls.key (standard kubernetes.io/tls).
+  existingSecret: ""
+
+  # If using cert-manager, create a Certificate resource and set existingSecret.
+  # certManager:
+  #   enabled: false
+  #   issuerRef:
+  #     name: letsencrypt-prod
+  #     kind: ClusterIssuer
+
+## Optional CA cert for mTLS client verification.
+# caCert:
+#   existingSecret: ""
+#   key: ca.crt
+
+## WireGuard mesh overlay settings.
+wireguard:
+  # WireGuard requires NET_ADMIN capability and /dev/net/tun. Both are enabled
+  # automatically when this is true. The listen port must be reachable from
+  # remote nodes (use service.wireguard.type: LoadBalancer or NodePort).
+  enabled: true
+  port: 51820
+
+## Docker socket mount for container management features.
+## Disabled by default — mounting the Docker socket grants significant privileges.
+## Only works on nodes where Docker (not containerd) is the runtime.
+docker:
+  enabled: false
+  socketPath: /var/run/docker.sock
+
+## Service account for Kubernetes in-cluster API access (used by the K8s
+## resource management features). Set enabled: false if you don't need them.
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+## RBAC for Kubernetes in-cluster access.
+rbac:
+  create: true
+
+## Pod-level settings
+podAnnotations: {}
+
+podSecurityContext:
+  # WireGuard interface manipulation requires root. If wireguard.enabled is
+  # false and no NET_ADMIN ops are needed you can set runAsUser: 1000.
+  runAsUser: 0
+  runAsGroup: 0
+  fsGroup: 0
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_ADMIN
+  readOnlyRootFilesystem: false
+  # allowPrivilegeEscalation must be true when adding NET_ADMIN
+  allowPrivilegeEscalation: true
+
+## Services
+service:
+  api:
+    type: ClusterIP
+    port: 8080
+    # annotations: {}
+
+  ## WireGuard UDP service. Needs to be reachable by remote nodes.
+  ## Use LoadBalancer (cloud) or NodePort (bare-metal) when wireguard.enabled is true.
+  wireguard:
+    type: LoadBalancer
+    port: 51820
+    # nodePort: 31820   # explicit NodePort, optional
+    # annotations: {}
+    #   service.beta.kubernetes.io/aws-load-balancer-type: nlb
+
+## Gateway API HTTPRoute for the HTTPS API / web UI.
+## Requires a Gateway resource to already exist in the cluster.
+gateway:
+  enabled: false
+  # Name of the Gateway this HTTPRoute attaches to
+  name: ""
+  # Namespace of the Gateway (defaults to the release namespace)
+  namespace: ""
+  # Optional: target a specific listener on the Gateway
+  sectionName: ""
+  # Hostnames this route handles
+  hostnames: []
+  # - scutum.example.com
+  annotations: {}
+  # Example — Cilium Gateway API TLS offload:
+  # annotations:
+  #   gateway.cilium.io/tls-passthrough: "false"
+
+## Persistent storage for the SQLite database and generated secrets.
+persistence:
+  data:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 5Gi
+    existingClaim: ""
+
+  secrets:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 256Mi
+    existingClaim: ""
+
+resources: {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 256Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+## Liveness/readiness probes
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: api
+    # scheme: HTTPS  # uncomment when tls.autoGenerate or tls.existingSecret is set
+  initialDelaySeconds: 15
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: api
+    # scheme: HTTPS
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+## Update strategy for the StatefulSet
+updateStrategy:
+  type: RollingUpdate
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+## Extra environment variables injected directly into the container
+extraEnv: []
+# - name: OTEL_EXPORTER_OTLP_ENDPOINT
+#   value: http://otel-collector:4317
+
+## Extra volumes / mounts (e.g. for KMS config)
+extraVolumes: []
+extraVolumeMounts: []

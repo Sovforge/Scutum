@@ -1,0 +1,230 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "scutum.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scutum.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  serviceName: {{ include "scutum.fullname" . }}
+  updateStrategy:
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "scutum.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scutum.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "scutum.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+
+      ## Init container: generate a self-signed TLS cert into the secrets volume
+      ## on first start. Skipped on subsequent starts if the cert already exists.
+      {{- if .Values.tls.autoGenerate }}
+      initContainers:
+        - name: tls-init
+          image: alpine:3.21
+          command:
+            - sh
+            - -c
+            - |
+              if [ -f /secrets/server.crt ] && [ -f /secrets/server.key ]; then
+                echo "TLS cert already present, skipping generation."
+                exit 0
+              fi
+              apk add --no-cache openssl >/dev/null 2>&1
+              openssl req -x509 -newkey rsa:4096 \
+                -keyout /secrets/server.key \
+                -out /secrets/server.crt \
+                -days 3650 -nodes \
+                -subj "/CN={{ include "scutum.fullname" . }}" \
+                -addext "subjectAltName=DNS:{{ include "scutum.fullname" . }},DNS:{{ include "scutum.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local,IP:127.0.0.1"
+              echo "TLS cert generated."
+          volumeMounts:
+            - name: secrets
+              mountPath: /secrets
+      {{- end }}
+
+      containers:
+        - name: scutum
+          image: {{ include "scutum.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+
+          ports:
+            - name: api
+              containerPort: {{ .Values.config.port }}
+              protocol: TCP
+            {{- if .Values.wireguard.enabled }}
+            - name: wireguard
+              containerPort: {{ .Values.wireguard.port }}
+              protocol: UDP
+            {{- end }}
+
+          envFrom:
+            - configMapRef:
+                name: {{ include "scutum.fullname" . }}
+
+          env:
+            {{- if .Values.database.url }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "scutum.fullname" . }}-db
+                  key: DATABASE_URL
+            {{- else if .Values.database.existingSecret }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.existingSecretKey | default "DATABASE_URL" }}
+            {{- end }}
+            {{- if .Values.tls.existingSecret }}
+            ## Override cert paths when certs come from an existing secret mounted below.
+            - name: CERT_FILE
+              value: /secrets/tls.crt
+            - name: KEY_FILE
+              value: /secrets/tls.key
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.config.dataDir }}
+            - name: secrets
+              mountPath: {{ .Values.config.secretsDir }}
+            {{- if .Values.docker.enabled }}
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            {{- end }}
+            {{- if .Values.wireguard.enabled }}
+            - name: dev-net-tun
+              mountPath: /dev/net/tun
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+      volumes:
+        {{- if not .Values.persistence.data.existingClaim }}
+        ## data volume is defined in volumeClaimTemplates below
+        {{- else }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.data.existingClaim }}
+        {{- end }}
+        {{- if .Values.tls.existingSecret }}
+        ## When an existing TLS secret is provided, mount it read-only.
+        ## The init container is skipped and the secrets volume still holds
+        ## any generated runtime keys (JWT, HMAC, WireGuard).
+        - name: secrets
+          projected:
+            sources:
+              {{- if not .Values.persistence.secrets.existingClaim }}
+              - persistentVolumeClaim:
+                  claimName: {{ include "scutum.fullname" . }}-secrets
+              {{- else }}
+              - persistentVolumeClaim:
+                  claimName: {{ .Values.persistence.secrets.existingClaim }}
+              {{- end }}
+              - secret:
+                  name: {{ .Values.tls.existingSecret }}
+                  items:
+                    - key: tls.crt
+                      path: tls.crt
+                    - key: tls.key
+                      path: tls.key
+        {{- else }}
+        {{- if .Values.persistence.secrets.existingClaim }}
+        - name: secrets
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.secrets.existingClaim }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.docker.enabled }}
+        - name: docker-sock
+          hostPath:
+            path: {{ .Values.docker.socketPath }}
+            type: Socket
+        {{- end }}
+        {{- if .Values.wireguard.enabled }}
+        ## /dev/net/tun is required by the embedded wireguard-go fallback.
+        ## The kernel WireGuard module does not need it but the device is harmless.
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+  volumeClaimTemplates:
+    {{- if and .Values.persistence.data.enabled (not .Values.persistence.data.existingClaim) }}
+    - metadata:
+        name: data
+        labels:
+          {{- include "scutum.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.data.accessMode }}
+        {{- if .Values.persistence.data.storageClass }}
+        storageClassName: {{ .Values.persistence.data.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.data.size }}
+    {{- end }}
+    {{- if and .Values.persistence.secrets.enabled (not .Values.persistence.secrets.existingClaim) (not .Values.tls.existingSecret) }}
+    - metadata:
+        name: secrets
+        labels:
+          {{- include "scutum.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.secrets.accessMode }}
+        {{- if .Values.persistence.secrets.storageClass }}
+        storageClassName: {{ .Values.persistence.secrets.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.secrets.size }}
+    {{- end }}
