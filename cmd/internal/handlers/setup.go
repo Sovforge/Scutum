@@ -16,6 +16,7 @@ import (
 
 	"scutum/cmd/internal/auth"
 	"scutum/cmd/internal/kms"
+	"scutum/cmd/internal/roaming"
 	"scutum/cmd/internal/store"
 	"scutum/cmd/internal/utils"
 
@@ -89,13 +90,14 @@ type kmsConfig struct {
 }
 
 type wireguardConfig struct {
-	ListenPort    int    `json:"listen_port,omitempty"`
-	Address       string `json:"address,omitempty"`
-	MTU           int    `json:"mtu,omitempty"`
-	HubEndpoint   string `json:"hub_endpoint,omitempty"`
-	HubPublicKey  string `json:"hub_public_key,omitempty"`
-	HubAllowedIPs string `json:"hub_allowed_ips,omitempty"`
-	HubHMACKey    string `json:"hub_hmac_key,omitempty"`
+	ListenPort     int    `json:"listen_port,omitempty"`
+	Address        string `json:"address,omitempty"`
+	MTU            int    `json:"mtu,omitempty"`
+	HubEndpoint    string `json:"hub_endpoint,omitempty"`
+	HubPublicKey   string `json:"hub_public_key,omitempty"`
+	HubAllowedIPs  string `json:"hub_allowed_ips,omitempty"`
+	HubHMACKey     string `json:"hub_hmac_key,omitempty"`
+	HubAPIAddress  string `json:"hub_api_address,omitempty"` // host:port of the hub's HTTP API
 }
 
 type setupRequest struct {
@@ -457,26 +459,33 @@ func (h *SetupHandler) setupWireGuard(ctx context.Context, req setupRequest) (*w
 		if err := utils.AddPeer("wg0", wg.HubPublicKey, wg.HubEndpoint, wg.HubAllowedIPs, 25); err != nil {
 			return nil, fmt.Errorf("add hub as peer: %w", err)
 		}
-		// Persist the hub peer so it can be restored after a container restart.
+		hubAPIAddr := resolveHubAPIAddr(wg)
 		_ = h.store.CreateNode(ctx, store.NodeRecord{
 			ID: "hub", Name: "hub", Type: "hub",
-			Address: wg.HubEndpoint, PublicKey: wg.HubPublicKey,
+			Address: hubAPIAddr, PublicKey: wg.HubPublicKey,
 		})
 		_ = h.store.UpsertWGPeer(ctx, store.WGPeerRecord{
 			NodeID: "hub", Endpoint: wg.HubEndpoint, AllowedIPs: wg.HubAllowedIPs,
 		})
+		if wg.HubAPIAddress != "" {
+			_ = h.store.SetSecret(ctx, "hub_api_address", []byte(wg.HubAPIAddress))
+		}
 	case store.InstallCombined:
 		if wg.HubEndpoint != "" && wg.HubPublicKey != "" {
 			if err := utils.AddPeer("wg0", wg.HubPublicKey, wg.HubEndpoint, wg.HubAllowedIPs, 25); err != nil {
 				return nil, fmt.Errorf("add hub as peer: %w", err)
 			}
+			hubAPIAddr := resolveHubAPIAddr(wg)
 			_ = h.store.CreateNode(ctx, store.NodeRecord{
 				ID: "hub", Name: "hub", Type: "hub",
-				Address: wg.HubEndpoint, PublicKey: wg.HubPublicKey,
+				Address: hubAPIAddr, PublicKey: wg.HubPublicKey,
 			})
 			_ = h.store.UpsertWGPeer(ctx, store.WGPeerRecord{
 				NodeID: "hub", Endpoint: wg.HubEndpoint, AllowedIPs: wg.HubAllowedIPs,
 			})
+			if wg.HubAPIAddress != "" {
+				_ = h.store.SetSecret(ctx, "hub_api_address", []byte(wg.HubAPIAddress))
+			}
 		}
 	}
 
@@ -488,6 +497,27 @@ func (h *SetupHandler) setupWireGuard(ctx context.Context, req setupRequest) (*w
 		res.ListenPort = cfg.Port
 	}
 	return res, nil
+}
+
+// resolveHubAPIAddr determines the address the node should use to reach the
+// hub's HTTP API. The preference order is:
+//
+//  1. Explicit HubAPIAddress provided by the operator — used as-is.
+//  2. Hub's WireGuard mesh IP derived from HubAllowedIPs (only when it is a
+//     single-host /32 or /128 route). Using the mesh IP means all API traffic
+//     stays inside the encrypted WireGuard tunnel, and WireGuard's built-in
+//     persistent-keepalive handles NAT roaming without any application-layer
+//     re-registration loop.
+//  3. HubEndpoint as a last resort (this is the WireGuard UDP endpoint and
+//     almost certainly has the wrong port, but it is better than nothing).
+func resolveHubAPIAddr(wg wireguardConfig) string {
+	if wg.HubAPIAddress != "" {
+		return wg.HubAPIAddress
+	}
+	if meshIP := roaming.HubMeshIP(wg.HubAllowedIPs); meshIP != "" {
+		return meshIP
+	}
+	return wg.HubEndpoint
 }
 
 func validateWireGuardConfig(req setupRequest) error {

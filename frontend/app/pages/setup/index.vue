@@ -112,6 +112,14 @@
               </div>
               <div class="form-row">
                 <label class="form-label">
+                  Hub API address
+                  <span class="form-label-hint">(optional)</span>
+                </label>
+                <input v-model="mesh.hubAPIAddress" class="form-input font-mono" placeholder="auto-derived from Hub allowed IPs" />
+                <p class="form-hint">Leave blank to use the hub's mesh IP derived from Hub allowed IPs (recommended). Fill in only when the hub runs its API on a different address. NAT roaming is handled automatically by WireGuard's built-in keepalive — no periodic re-registration needed.</p>
+              </div>
+              <div class="form-row">
+                <label class="form-label">
                   Hub proxy key
                   <span class="form-label-hint">(from hub's Enroll Peer dialog)</span>
                 </label>
@@ -620,10 +628,11 @@ const mesh = reactive({
   address:       randomMeshAddress(),
   listenPort:    51820,
   mtu:           0,
-  hubEndpoint:   '',
-  hubPublicKey:  '',
-  hubAllowedIPs: '',
-  hubHMACKey:    '',
+  hubEndpoint:    '',
+  hubPublicKey:   '',
+  hubAllowedIPs:  '',
+  hubHMACKey:     '',
+  hubAPIAddress:  '',
 })
 
 // When role changes, reset address and re-derive allowedIPs
@@ -688,10 +697,11 @@ function buildPayload(): SetupRequest {
       address:         mesh.address,
       listen_port:     mesh.installType !== 'remote' ? mesh.listenPort : undefined,
       mtu:             mesh.mtu > 0 ? mesh.mtu : undefined,
-      hub_endpoint:    mesh.installType !== 'hub' && mesh.hubEndpoint   ? mesh.hubEndpoint   : undefined,
-      hub_public_key:  mesh.installType !== 'hub' && mesh.hubPublicKey  ? mesh.hubPublicKey  : undefined,
-      hub_allowed_ips: mesh.installType !== 'hub' && mesh.hubAllowedIPs ? mesh.hubAllowedIPs : undefined,
-      hub_hmac_key:    mesh.installType !== 'hub' && mesh.hubHMACKey    ? mesh.hubHMACKey    : undefined,
+      hub_endpoint:     mesh.installType !== 'hub' && mesh.hubEndpoint    ? mesh.hubEndpoint    : undefined,
+      hub_public_key:   mesh.installType !== 'hub' && mesh.hubPublicKey   ? mesh.hubPublicKey   : undefined,
+      hub_allowed_ips:  mesh.installType !== 'hub' && mesh.hubAllowedIPs  ? mesh.hubAllowedIPs  : undefined,
+      hub_hmac_key:     mesh.installType !== 'hub' && mesh.hubHMACKey     ? mesh.hubHMACKey     : undefined,
+      hub_api_address:  mesh.installType !== 'hub' && mesh.hubAPIAddress  ? mesh.hubAPIAddress  : undefined,
     },
     admin:    { username: admin.username, password: admin.password },
     recovery: kms.provider === 'local' ? { n_shares: recovery.n, threshold: recovery.t } : undefined,
@@ -718,10 +728,11 @@ async function submitRemote() {
       wireguard: {
         address:         mesh.address,
         mtu:             mesh.mtu > 0 ? mesh.mtu : undefined,
-        hub_endpoint:    mesh.hubEndpoint   || undefined,
-        hub_public_key:  mesh.hubPublicKey  || undefined,
-        hub_allowed_ips: mesh.hubAllowedIPs || undefined,
-        hub_hmac_key:    mesh.hubHMACKey    || undefined,
+        hub_endpoint:    mesh.hubEndpoint    || undefined,
+        hub_public_key:  mesh.hubPublicKey   || undefined,
+        hub_allowed_ips: mesh.hubAllowedIPs  || undefined,
+        hub_hmac_key:    mesh.hubHMACKey     || undefined,
+        hub_api_address: mesh.hubAPIAddress  || undefined,
       },
       admin: { username: '', password: '' },
     })

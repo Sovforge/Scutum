@@ -21,6 +21,7 @@ export interface SetupRequest {
     hub_public_key?:  string
     hub_allowed_ips?: string
     hub_hmac_key?:    string
+    hub_api_address?: string
   }
   admin: { username: string; password: string }
   recovery?: { n_shares: number; threshold: number }

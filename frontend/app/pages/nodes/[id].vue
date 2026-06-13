@@ -65,7 +65,7 @@
         <UiCard title="WireGuard">
           <dl class="info-list">
             <div class="info-list__row">
-              <dt>Endpoint</dt>
+              <dt>API address</dt>
               <dd class="mono">{{ node.endpoint }}</dd>
             </div>
             <div class="info-list__row">
@@ -78,7 +78,7 @@
             </div>
             <div class="info-list__row">
               <dt>Listen port</dt>
-              <dd class="mono">51820</dd>
+              <dd class="mono">—</dd>
             </div>
             <div class="info-list__row">
               <dt>Last handshake</dt>

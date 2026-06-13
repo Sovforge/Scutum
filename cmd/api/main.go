@@ -2,16 +2,12 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"embed"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +33,7 @@ import (
 	"scutum/cmd/internal/kms"
 	"scutum/cmd/internal/metrics"
 	plugin "scutum/cmd/internal/plugins"
+	"scutum/cmd/internal/roaming"
 	"scutum/cmd/internal/store"
 	"scutum/cmd/internal/sync"
 	"scutum/cmd/internal/utils"
@@ -874,6 +871,11 @@ func loadOrGenerateHMACKey(ctx context.Context, db *store.Store, secretsDir stri
 }
 
 func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, healer *sync.Healer, clientTLSConfig *tls.Config) error {
+	installType, err := db.GetInstallType(ctx)
+	if err != nil {
+		return fmt.Errorf("get install type: %w", err)
+	}
+
 	peers, err := db.ListWGPeers(ctx)
 	if err != nil {
 		return fmt.Errorf("list peers: %w", err)
@@ -885,29 +887,46 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 	}
 
 	for _, node := range nodes {
-		if node.Type != "remote" {
-			continue
+		// Only register nodes with the pusher if we are the hub and they are edge nodes.
+		if installType == store.InstallHub && (node.Type == "remote" || node.Type == "combined") {
+			apiBase := roaming.NodeAPIBase(node.Address)
+			if apiBase != "" {
+				token, _ := db.GetSecret(ctx, "edge_token_"+node.ID)
+				sink := sync.NewHTTPEdgeSink(node.ID, apiBase+"/sync", string(token), clientTLSConfig)
+				pusher.Register(sink)
+				logger.Info("registered edge", "node_id", node.ID)
+			}
 		}
-		apiBase := nodeAPIBase(node.Address)
-		if apiBase == "" {
-			continue
-		}
-		token, _ := db.GetSecret(ctx, "edge_token_"+node.ID)
-		sink := sync.NewHTTPEdgeSink(node.ID, apiBase+"/sync", string(token), clientTLSConfig)
-		pusher.Register(sink)
-		logger.Info("registered edge", "node_id", node.ID)
 
-		// Register with healer, wiring FreshEndpoint so the healer re-adds the
-		// peer using the latest DB endpoint if the edge registers a new one.
+		// Hub monitors edge nodes. Edge nodes monitor the hub node.
+		shouldHeal := false
+		if installType == store.InstallHub {
+			shouldHeal = (node.Type == "remote" || node.Type == "combined")
+		} else {
+			shouldHeal = (node.Type == "hub")
+		}
+
+		if !shouldHeal {
+			continue
+		}
+
+		// Register with healer. FreshEndpoint first checks WireGuard's live
+		// kernel state — which persistent-keepalive keeps current automatically
+		// — then falls back to the DB for cold-start cases where the tunnel
+		// has not yet had a keepalive exchange.
 		for _, p := range peers {
 			if p.NodeID == node.ID {
-				nodeID := node.ID // capture for closure
+				nodeID := node.ID       // capture for closure
+				pubKey := node.PublicKey // capture for closure
 				healer.AddPeer(sync.WGPeer{
 					IfaceName:  "wg0",
-					PublicKey:  node.PublicKey,
+					PublicKey:  pubKey,
 					Endpoint:   p.Endpoint,
 					AllowedIPs: p.AllowedIPs,
 					FreshEndpoint: func(ctx context.Context) (string, error) {
+						if ep, err := utils.GetPeerEndpoint("wg0", pubKey); err == nil && ep != "" {
+							return ep, nil
+						}
 						fresh, err := db.GetWGPeer(ctx, nodeID)
 						if err != nil {
 							return "", err
@@ -922,17 +941,15 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 	return nil
 }
 
-// endpointRefreshInterval controls how often an edge node re-registers its
-// WireGuard endpoint with the hub. Keeping this short means the hub picks up
-// a new NAT mapping within one interval when the node changes networks (e.g.
-// laptop roaming between WiFi and mobile hotspot).
-const endpointRefreshInterval = 2 * time.Minute
-
-// registerOwnEndpoint runs on remote nodes. It pushes the
-// node's current WireGuard listen port to the hub; the hub derives the full
-// endpoint as "observed-source-IP:listen_port" and stores it in wg_peers.
-// After the initial registration it loops, re-registering every
-// endpointRefreshInterval so the hub always has the current NAT mapping.
+// registerOwnEndpoint runs once at startup on edge (remote/combined) nodes. It
+// pushes the node's current WireGuard listen port to the hub so the hub's
+// wg_peers table reflects the correct endpoint after a restart or IP change.
+//
+// Ongoing NAT roaming is handled by WireGuard itself: persistent-keepalive = 25
+// causes the edge node to send a keepalive packet to the hub every 25 seconds.
+// When the edge node changes public IP, WireGuard on the hub updates the peer's
+// endpoint automatically from the new packet source — no periodic application-
+// layer re-registration is needed.
 func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Logger, tlsConfig *tls.Config) {
 	installType, err := db.GetInstallType(ctx)
 	if err != nil || (installType != store.InstallRemote && installType != store.InstallCombined) {
@@ -956,7 +973,7 @@ func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Log
 		logger.Warn("registerOwnEndpoint: no hub node in DB, skipping")
 		return
 	}
-	hubAPIBase := nodeAPIBase(hubAddr)
+	hubAPIBase := roaming.NodeAPIBase(hubAddr)
 
 	// Our WireGuard public key.
 	pubKeyBytes, err := utils.DefaultCommandRunner.Output("wg", "show", "wg0", "public-key")
@@ -988,7 +1005,7 @@ func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Log
 
 	// Initial registration with retry backoff.
 	for attempt := 1; attempt <= 5; attempt++ {
-		if err := callRegisterEndpoint(ctx, hubAPIBase, pubKey, listenPort, hmacKey, tlsConfig); err != nil {
+		if err := roaming.CallRegisterEndpoint(ctx, hubAPIBase, pubKey, listenPort, hmacKey, tlsConfig); err != nil {
 			logger.Warn("registerOwnEndpoint: attempt failed, retrying",
 				"attempt", attempt, "error", err)
 			select {
@@ -1003,61 +1020,6 @@ func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Log
 		break
 	}
 
-	// Periodic re-registration: if the node changes networks (different NAT
-	// exit IP) the hub learns the new mapping on the next tick rather than
-	// waiting for a restart.
-	ticker := time.NewTicker(endpointRefreshInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := callRegisterEndpoint(ctx, hubAPIBase, pubKey, listenPort, hmacKey, tlsConfig); err != nil {
-				logger.Warn("registerOwnEndpoint: periodic refresh failed", "error", err)
-			} else {
-				logger.Debug("registerOwnEndpoint: endpoint refreshed", "hub", hubAPIBase)
-			}
-		}
-	}
-}
-
-// callRegisterEndpoint sends a signed POST to the hub's /api/network/register-endpoint.
-// It uses the same HMAC signing format as hub-proxied requests so the hub's existing
-// auth middleware accepts it without additional setup.
-func callRegisterEndpoint(ctx context.Context, hubAPIBase, pubKey string, listenPort int, hmacKey []byte, tlsConfig *tls.Config) error {
-	body, _ := json.Marshal(map[string]interface{}{
-		"public_key":  pubKey,
-		"listen_port": listenPort,
-	})
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		hubAPIBase+"/api/network/register-endpoint", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	mac := hmac.New(sha256.New, hmacKey)
-	fmt.Fprintf(mac, "%s\n%s\n%s\n", ts, req.Method, "/api/network/register-endpoint")
-	sig := hex.EncodeToString(mac.Sum(nil))
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Scutum-Hub-Sig", sig)
-	req.Header.Set("X-Scutum-Hub-Ts", ts)
-
-	resp, err := (&http.Client{
-		Timeout:   10 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
-	}).Do(req)
-	if err != nil {
-		return fmt.Errorf("http: %w", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("hub returned HTTP %d", resp.StatusCode)
-	}
-	return nil
 }
 
 // restoreWGPeers re-adds all WireGuard peers from the database after the
@@ -1089,24 +1051,6 @@ func restoreWGPeers(ctx context.Context, db *store.Store, logger *utils.Logger) 
 			logger.Info("restoreWGPeers: re-added peer", "node_id", p.NodeID)
 		}
 	}
-}
-
-// nodeAPIBase converts a node's stored address (which may be a WireGuard CIDR
-// like "10.x.x.x/24" or a proper "host:port") into an "https://host:port" base
-// URL suitable for API sync and proxy calls. Returns "" if addr is empty.
-func nodeAPIBase(addr string) string {
-	if addr == "" {
-		return ""
-	}
-	// Strip CIDR suffix (e.g. "10.0.0.2/24" → "10.0.0.2")
-	if idx := strings.Index(addr, "/"); idx != -1 && !strings.Contains(addr[:idx], ":") {
-		addr = addr[:idx]
-	}
-	// Add default port if none present
-	if !strings.Contains(addr, ":") {
-		addr = addr + ":8080"
-	}
-	return "https://" + addr
 }
 
 type responseWriter struct {
