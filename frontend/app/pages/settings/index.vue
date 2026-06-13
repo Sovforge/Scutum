@@ -32,6 +32,9 @@
         <NuxtLink to="/settings/scim"       class="settings-nav__item">
           <Icon name="lucide:users" size="15" /> SCIM
         </NuxtLink>
+        <NuxtLink to="/settings/recovery"   class="settings-nav__item">
+          <Icon name="lucide:usb" size="15" /> Recovery Keys
+        </NuxtLink>
       </nav>
 
       <!-- Content -->
@@ -123,9 +126,8 @@
               <div class="form-row">
                 <label class="form-label">Default role</label>
                 <select v-model="nodeDefaults.role" class="form-select">
-                  <option>edge</option>
-                  <option>hub</option>
-                  <option value="hub+edge">hub+edge</option>
+                  <option value="remote">Remote</option>
+                  <option value="hub">Hub</option>
                 </select>
               </div>
               <div class="form-row form-row--toggle">
@@ -440,7 +442,7 @@ const mesh = reactive({
 })
 
 const nodeDefaults = reactive({
-  role: 'edge',
+  role: 'remote',
   requireApproval: true,
   heartbeat: 30,
 })

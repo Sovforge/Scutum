@@ -295,7 +295,7 @@ func main() {
 		logger.Error("edge registration failed after all attempts")
 	}()
 
-	// For edge (remote/combined) installs: push our current WireGuard endpoint to
+	// For remote installs: push our current WireGuard endpoint to
 	// the hub on startup so the hub's wg_peers table stays accurate even when our
 	// public IP or NAT mapping has changed since initial setup.
 	go registerOwnEndpoint(ctx, db, logger, meshTLSConfig)

@@ -75,13 +75,13 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 			CREATE TABLE nodes (
 				id          TEXT PRIMARY KEY,
 				name        TEXT NOT NULL,
-				type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
+				type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 				address     TEXT NOT NULL,
 				public_key  TEXT NOT NULL,
 				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 			INSERT INTO nodes SELECT id, name,
-				CASE type WHEN 'peer' THEN 'remote' WHEN 'edge' THEN 'combined' ELSE type END,
+				CASE type WHEN 'peer' THEN 'remote' WHEN 'edge' THEN 'remote' WHEN 'combined' THEN 'remote' ELSE type END,
 				address, public_key, created_at FROM nodes_old;
 			DROP TABLE nodes_old;
 		`); err != nil {
@@ -96,7 +96,7 @@ const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
 			id          TEXT PRIMARY KEY,
 			name        TEXT NOT NULL,
-			type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
+			type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 			address     TEXT NOT NULL,
 			public_key  TEXT NOT NULL,
 			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

@@ -27,7 +27,7 @@ func NewNodeHandler(s nodeStore) *NodeHandler {
 
 type createNodeRequest struct {
 	Name      string `json:"name"`
-	Type      string `json:"type"`       // hub | peer | edge
+	Type      string `json:"type"`       // hub | remote
 	Address   string `json:"address"`    // host:port
 	PublicKey string `json:"public_key"` // WireGuard public key
 }
@@ -67,9 +67,9 @@ func (h *NodeHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Type {
-	case "hub", "remote", "combined":
+	case "hub", "remote":
 	default:
-		http.Error(w, "type must be hub, remote, or combined", http.StatusBadRequest)
+		http.Error(w, "type must be hub or remote", http.StatusBadRequest)
 		return
 	}
 

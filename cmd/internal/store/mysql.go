@@ -69,7 +69,7 @@ const mysqlSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
     id          VARCHAR(255) PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
-    type        ENUM('hub', 'remote', 'combined') NOT NULL,
+    type        ENUM('hub', 'remote') NOT NULL,
     address     VARCHAR(255) NOT NULL,
     public_key  TEXT NOT NULL,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
