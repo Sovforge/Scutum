@@ -871,6 +871,11 @@ func loadOrGenerateHMACKey(ctx context.Context, db *store.Store, secretsDir stri
 }
 
 func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, healer *sync.Healer, clientTLSConfig *tls.Config) error {
+	installType, err := db.GetInstallType(ctx)
+	if err != nil {
+		return fmt.Errorf("get install type: %w", err)
+	}
+
 	peers, err := db.ListWGPeers(ctx)
 	if err != nil {
 		return fmt.Errorf("list peers: %w", err)
@@ -882,17 +887,28 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 	}
 
 	for _, node := range nodes {
-		if node.Type != "remote" && node.Type != "combined" {
+		// Only register nodes with the pusher if we are the hub and they are edge nodes.
+		if installType == store.InstallHub && (node.Type == "remote" || node.Type == "combined") {
+			apiBase := roaming.NodeAPIBase(node.Address)
+			if apiBase != "" {
+				token, _ := db.GetSecret(ctx, "edge_token_"+node.ID)
+				sink := sync.NewHTTPEdgeSink(node.ID, apiBase+"/sync", string(token), clientTLSConfig)
+				pusher.Register(sink)
+				logger.Info("registered edge", "node_id", node.ID)
+			}
+		}
+
+		// Hub monitors edge nodes. Edge nodes monitor the hub node.
+		shouldHeal := false
+		if installType == store.InstallHub {
+			shouldHeal = (node.Type == "remote" || node.Type == "combined")
+		} else {
+			shouldHeal = (node.Type == "hub")
+		}
+
+		if !shouldHeal {
 			continue
 		}
-		apiBase := roaming.NodeAPIBase(node.Address)
-		if apiBase == "" {
-			continue
-		}
-		token, _ := db.GetSecret(ctx, "edge_token_"+node.ID)
-		sink := sync.NewHTTPEdgeSink(node.ID, apiBase+"/sync", string(token), clientTLSConfig)
-		pusher.Register(sink)
-		logger.Info("registered edge", "node_id", node.ID)
 
 		// Register with healer. FreshEndpoint first checks WireGuard's live
 		// kernel state — which persistent-keepalive keeps current automatically
