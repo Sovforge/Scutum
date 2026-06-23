@@ -80,6 +80,7 @@ const navItems = [
   { to: '/kubernetes',   icon: 'lucide:layers',           label: 'Kubernetes'   },
   { to: '/storage',      icon: 'lucide:hard-drive',       label: 'Storage'      },
   { to: '/observability',icon: 'lucide:activity',         label: 'Observability'},
+  { to: '/monitoring',   icon: 'lucide:cpu',              label: 'Monitoring'   },
   { to: '/terminal',     icon: 'lucide:terminal',         label: 'Terminal'     },
   { to: '/gitops',       icon: 'lucide:git-branch',       label: 'GitOps'       },
   { to: '/plugins',      icon: 'lucide:puzzle',           label: 'Plugins'      },

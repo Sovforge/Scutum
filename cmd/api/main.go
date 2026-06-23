@@ -27,6 +27,7 @@ import (
 	"golang.org/x/time/rate"
 
 	scutumacme "scutum/cmd/internal/acme"
+	"scutum/cmd/internal/alerts"
 	"scutum/cmd/internal/auth"
 	"scutum/cmd/internal/handlers"
 	"scutum/cmd/internal/license"
@@ -36,6 +37,7 @@ import (
 	plugin "scutum/cmd/internal/plugins"
 	"scutum/cmd/internal/roaming"
 	"scutum/cmd/internal/store"
+	"scutum/cmd/internal/sysinfo"
 	"scutum/cmd/internal/sync"
 	"scutum/cmd/internal/utils"
 	"scutum/cmd/internal/wireguard"
@@ -324,6 +326,9 @@ func main() {
 
 	// Start rate-limiter cleanup to prevent memory growth
 	go cleanupVisitors(ctx)
+
+	// OTel span export — forward internal spans to an external OTLP collector when configured
+	utils.StartOTLPExporter(ctx, os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 
 	// Background log cleanup (runs every 24h)
 	go func() {
@@ -631,9 +636,77 @@ func main() {
 	apiMux.Handle("POST /recovery/recover", require("admin", "admin", recoveryCtrl.HandleRecover))
 	apiMux.Handle("POST /recovery/reissue-shares", require("admin", "admin", recoveryCtrl.HandleReissueShares))
 
-	// System info (public)
-	systemCtrl := handlers.NewSystemHandler()
+	// System info
+	systemCtrl := handlers.NewSystemHandler(db, db)
 	apiMux.Handle("GET /system/tls-mode", http.HandlerFunc(systemCtrl.HandleTLSMode))
+	apiMux.Handle("GET /system/stats", require("nodes", "read", systemCtrl.HandleSystemStats))
+	apiMux.Handle("GET /system/stats/history", require("nodes", "read", systemCtrl.HandleSystemStatsHistory))
+
+	// Background: collect and store local resource stats every 60 seconds
+	go func() {
+		collectStats := func() {
+			s, err := sysinfo.Collect()
+			if err != nil {
+				return
+			}
+			db.SaveNodeStats(ctx, store.NodeStatRecord{
+				ID:         fmt.Sprintf("%d", time.Now().UnixNano()),
+				CPUPercent: s.CPUPercent,
+				MemUsed:    s.MemUsed,
+				MemTotal:   s.MemTotal,
+				DiskUsed:   s.DiskUsed,
+				DiskTotal:  s.DiskTotal,
+				Load1:      s.Load1,
+				Load5:      s.Load5,
+				Load15:     s.Load15,
+				RecordedAt: s.RecordedAt,
+			})
+			metrics.NodeCPUPercent.Set(s.CPUPercent)
+			metrics.NodeMemPercent.Set(s.MemPercent)
+			metrics.NodeDiskPercent.Set(s.DiskPercent)
+		}
+		collectStats()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				collectStats()
+			}
+		}
+	}()
+
+	// Alert evaluator
+	go alerts.NewEvaluator(db, dispatcher).Start(ctx)
+
+	// Backup & restore
+	backupDriver := "sqlite"
+	backupSQLitePath := filepath.Join(dataDir, "scutum.db")
+	if strings.HasPrefix(dbURL, "postgres://") || strings.HasPrefix(dbURL, "postgresql://") {
+		backupDriver = "postgres"
+		backupSQLitePath = ""
+	} else if strings.HasPrefix(dbURL, "mysql://") {
+		backupDriver = "mysql"
+		backupSQLitePath = ""
+	}
+	backupCtrl := handlers.NewBackupHandler(db, dataDir, backupDriver, dbURL, backupSQLitePath)
+	apiMux.Handle("GET /admin/backups", require("admin", "admin", backupCtrl.HandleList))
+	apiMux.Handle("POST /admin/backups", require("admin", "admin", backupCtrl.HandleCreate))
+	apiMux.Handle("GET /admin/backups/{id}/download", require("admin", "admin", backupCtrl.HandleDownload))
+	apiMux.Handle("DELETE /admin/backups/{id}", require("admin", "admin", backupCtrl.HandleDelete))
+	apiMux.Handle("POST /admin/backups/{id}/restore", require("admin", "admin", backupCtrl.HandleRestore))
+
+	// Alert rules and events
+	alertsCtrl := handlers.NewAlertsHandler(db)
+	apiMux.Handle("GET /alerts/rules", require("admin", "admin", alertsCtrl.HandleListRules))
+	apiMux.Handle("POST /alerts/rules", require("admin", "admin", alertsCtrl.HandleCreateRule))
+	apiMux.Handle("PUT /alerts/rules/{id}", require("admin", "admin", alertsCtrl.HandleUpdateRule))
+	apiMux.Handle("DELETE /alerts/rules/{id}", require("admin", "admin", alertsCtrl.HandleDeleteRule))
+	apiMux.Handle("PUT /alerts/rules/{id}/silence", require("admin", "admin", alertsCtrl.HandleSilenceRule))
+	apiMux.Handle("GET /alerts/events", require("admin", "admin", alertsCtrl.HandleListEvents))
+	apiMux.Handle("POST /alerts/events/{id}/acknowledge", require("admin", "admin", alertsCtrl.HandleAcknowledgeEvent))
 
 	// API docs (public)
 	docsCtrl := handlers.NewDocsHandler(openAPISpec)

@@ -166,6 +166,54 @@ export interface SSOProvider {
   icon: string
 }
 
+export interface AlertRule {
+  id:             string
+  name:           string
+  condition:      'cpu_percent' | 'mem_percent' | 'disk_percent' | 'node_offline' | 'handshake_age'
+  threshold:      number
+  severity:       'info' | 'warning' | 'critical'
+  enabled:        boolean
+  silenced_until: string
+  created_at:     string
+}
+
+export interface AlertEvent {
+  id:              string
+  rule_id:         string
+  rule_name:       string
+  severity:        string
+  message:         string
+  fired_at:        string
+  resolved_at:     string
+  acknowledged_at: string
+}
+
+export interface BackupRecord {
+  id:         string
+  filename:   string
+  driver:     string
+  size_bytes: number
+  created_at: string
+}
+
+export interface SystemStats {
+  cpu_percent:  number
+  mem_used:     number
+  mem_total:    number
+  mem_percent:  number
+  disk_used:    number
+  disk_total:   number
+  disk_percent: number
+  load_1:       number
+  load_5:       number
+  load_15:      number
+  recorded_at:  string
+}
+
+export interface SystemStatRecord extends SystemStats {
+  id: string
+}
+
 export interface GitSyncRequest {
   repo_url:   string
   username?:  string
@@ -627,9 +675,41 @@ export function useApi() {
     await $fetch(`${BASE}/audit/forwarders/${id}`, { method: 'DELETE', headers: h() })
   }
 
+  // ── Backups ─────────────────────────────────────────────────────────────────
+  async function listBackups(): Promise<BackupRecord[]> {
+    return $fetch<BackupRecord[]>(`${BASE}/admin/backups`, { headers: h() })
+  }
+
+  async function createBackup(): Promise<BackupRecord> {
+    return $fetch<BackupRecord>(`${BASE}/admin/backups`, { method: 'POST', headers: h() })
+  }
+
+  function downloadBackupUrl(id: string): string {
+    return `${BASE}/admin/backups/${encodeURIComponent(id)}/download`
+  }
+
+  async function deleteBackup(id: string): Promise<void> {
+    await $fetch(`${BASE}/admin/backups/${encodeURIComponent(id)}`, { method: 'DELETE', headers: h() })
+  }
+
+  async function restoreBackup(id: string): Promise<{ status: string; requires_restart: boolean; message: string }> {
+    return $fetch(`${BASE}/admin/backups/${encodeURIComponent(id)}/restore`, { method: 'POST', headers: h() })
+  }
+
   // ── TLS mode ───────────────────────────────────────────────────────────────
   async function getTLSMode(): Promise<{ mode: string; domain?: string; email?: string; staging?: boolean; cert_file?: string }> {
     return $fetch(`${BASE}/system/tls-mode`)
+  }
+
+  // ── System stats ────────────────────────────────────────────────────────────
+  async function getSystemStats(nodeId?: string): Promise<SystemStats> {
+    const hdrs = nodeId ? { ...h(), 'X-Target-Node': nodeId } : h()
+    return $fetch<SystemStats>(`${BASE}/system/stats`, { headers: hdrs })
+  }
+
+  async function getSystemStatsHistory(nodeId?: string, limit = 144): Promise<SystemStatRecord[]> {
+    const hdrs = nodeId ? { ...h(), 'X-Target-Node': nodeId } : h()
+    return $fetch<SystemStatRecord[]>(`${BASE}/system/stats/history?limit=${limit}`, { headers: hdrs })
   }
 
   // ── Database export ────────────────────────────────────────────────────────
@@ -637,6 +717,31 @@ export function useApi() {
     const res = await fetch(`${BASE}/admin/export`, { headers: h() })
     if (!res.ok) throw new Error(`export failed: ${res.status}`)
     return res.blob()
+  }
+
+  // ── Alert rules ────────────────────────────────────────────────────────────
+  async function listAlertRules(): Promise<AlertRule[]> {
+    return $fetch<AlertRule[]>(`${BASE}/alerts/rules`, { headers: h() })
+  }
+  async function createAlertRule(rule: Omit<AlertRule, 'id' | 'created_at'>): Promise<AlertRule> {
+    return $fetch<AlertRule>(`${BASE}/alerts/rules`, { method: 'POST', body: rule, headers: h() })
+  }
+  async function updateAlertRule(id: string, rule: Partial<AlertRule>): Promise<AlertRule> {
+    return $fetch<AlertRule>(`${BASE}/alerts/rules/${id}`, { method: 'PUT', body: rule, headers: h() })
+  }
+  async function deleteAlertRule(id: string): Promise<void> {
+    await $fetch(`${BASE}/alerts/rules/${id}`, { method: 'DELETE', headers: h() })
+  }
+  async function silenceAlertRule(id: string, until: string): Promise<AlertRule> {
+    return $fetch<AlertRule>(`${BASE}/alerts/rules/${id}/silence`, { method: 'PUT', body: { until }, headers: h() })
+  }
+
+  // ── Alert events ───────────────────────────────────────────────────────────
+  async function listAlertEvents(limit = 100): Promise<AlertEvent[]> {
+    return $fetch<AlertEvent[]>(`${BASE}/alerts/events?limit=${limit}`, { headers: h() })
+  }
+  async function acknowledgeAlertEvent(id: string): Promise<void> {
+    await $fetch(`${BASE}/alerts/events/${id}/acknowledge`, { method: 'POST', headers: h() })
   }
 
   return {
@@ -668,5 +773,9 @@ export function useApi() {
     getSSOProviders,
     getTLSMode,
     erkGenerateShares, erkReissueShares, erkRecover,
+    getSystemStats, getSystemStatsHistory,
+    listBackups, createBackup, downloadBackupUrl, deleteBackup, restoreBackup,
+    listAlertRules, createAlertRule, updateAlertRule, deleteAlertRule, silenceAlertRule,
+    listAlertEvents, acknowledgeAlertEvent,
   }
 }

@@ -47,6 +47,40 @@ func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN disabled TINYINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN email VARCHAR(255)`,
+		// alert tables
+		`CREATE TABLE IF NOT EXISTS alert_rules (
+			id             VARCHAR(255) PRIMARY KEY,
+			name           VARCHAR(255) NOT NULL,
+			condition      VARCHAR(50) NOT NULL,
+			threshold      DOUBLE NOT NULL DEFAULT 0,
+			severity       VARCHAR(20) NOT NULL DEFAULT 'warning',
+			enabled        TINYINT NOT NULL DEFAULT 1,
+			silenced_until TIMESTAMP NULL,
+			created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS alert_events (
+			id              VARCHAR(255) PRIMARY KEY,
+			rule_id         VARCHAR(255) NOT NULL,
+			rule_name       VARCHAR(255) NOT NULL,
+			severity        VARCHAR(20) NOT NULL,
+			message         TEXT NOT NULL,
+			fired_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			resolved_at     TIMESTAMP NULL,
+			acknowledged_at TIMESTAMP NULL
+		)`,
+		// node_stats table
+		`CREATE TABLE IF NOT EXISTS node_stats (
+			id           VARCHAR(255) PRIMARY KEY,
+			cpu_percent  DOUBLE NOT NULL DEFAULT 0,
+			mem_used     BIGINT NOT NULL DEFAULT 0,
+			mem_total    BIGINT NOT NULL DEFAULT 0,
+			disk_used    BIGINT NOT NULL DEFAULT 0,
+			disk_total   BIGINT NOT NULL DEFAULT 0,
+			load_1       DOUBLE NOT NULL DEFAULT 0,
+			load_5       DOUBLE NOT NULL DEFAULT 0,
+			load_15      DOUBLE NOT NULL DEFAULT 0,
+			recorded_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
 		// otel_metrics table (MySQL runs one statement at a time)
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
 			id         VARCHAR(255) PRIMARY KEY,

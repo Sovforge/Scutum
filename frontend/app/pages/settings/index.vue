@@ -35,6 +35,12 @@
         <NuxtLink to="/settings/recovery"   class="settings-nav__item">
           <Icon name="lucide:usb" size="15" /> Recovery Keys
         </NuxtLink>
+        <NuxtLink to="/settings/backup"     class="settings-nav__item">
+          <Icon name="lucide:database-backup" size="15" /> Backup &amp; Restore
+        </NuxtLink>
+        <NuxtLink to="/settings/alerts"     class="settings-nav__item">
+          <Icon name="lucide:bell-ring" size="15" /> Alert Rules
+        </NuxtLink>
       </nav>
 
       <!-- Content -->

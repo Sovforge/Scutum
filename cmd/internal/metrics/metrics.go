@@ -36,4 +36,18 @@ var (
 		Name: "scutum_healer_checks_total",
 		Help: "Total number of health checks performed by the healer",
 	}, []string{"result"})
+
+	// Node resource gauges — updated by the background stats collector
+	NodeCPUPercent = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "scutum_node_cpu_percent",
+		Help: "Current CPU usage percent of this node (0–100)",
+	})
+	NodeMemPercent = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "scutum_node_mem_percent",
+		Help: "Current memory usage percent of this node (0–100)",
+	})
+	NodeDiskPercent = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "scutum_node_disk_percent",
+		Help: "Current disk usage percent of this node (0–100)",
+	})
 )
