@@ -53,6 +53,42 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
 	}
 
+	// alert_rules and alert_events tables
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alert_rules (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		condition      TEXT NOT NULL,
+		threshold      REAL NOT NULL DEFAULT 0,
+		severity       TEXT NOT NULL DEFAULT 'warning',
+		enabled        INTEGER NOT NULL DEFAULT 1,
+		silenced_until DATETIME,
+		created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alert_events (
+		id              TEXT PRIMARY KEY,
+		rule_id         TEXT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+		rule_name       TEXT NOT NULL,
+		severity        TEXT NOT NULL,
+		message         TEXT NOT NULL,
+		fired_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		resolved_at     DATETIME,
+		acknowledged_at DATETIME
+	)`)
+
+	// node_stats table — rolling 24-hour resource metric history
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS node_stats (
+		id           TEXT PRIMARY KEY,
+		cpu_percent  REAL NOT NULL DEFAULT 0,
+		mem_used     INTEGER NOT NULL DEFAULT 0,
+		mem_total    INTEGER NOT NULL DEFAULT 0,
+		disk_used    INTEGER NOT NULL DEFAULT 0,
+		disk_total   INTEGER NOT NULL DEFAULT 0,
+		load_1       REAL NOT NULL DEFAULT 0,
+		load_5       REAL NOT NULL DEFAULT 0,
+		load_15      REAL NOT NULL DEFAULT 0,
+		recorded_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+
 	// otel_metrics table (new — safe to CREATE IF NOT EXISTS)
 	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS otel_metrics (
 		id         TEXT PRIMARY KEY,

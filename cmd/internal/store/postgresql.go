@@ -45,6 +45,27 @@ func (d PostgresDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`,
+		// alert tables
+		`CREATE TABLE IF NOT EXISTS alert_rules (
+			id             TEXT PRIMARY KEY,
+			name           TEXT NOT NULL,
+			condition      TEXT NOT NULL,
+			threshold      DOUBLE PRECISION NOT NULL DEFAULT 0,
+			severity       TEXT NOT NULL DEFAULT 'warning',
+			enabled        INTEGER NOT NULL DEFAULT 1,
+			silenced_until TIMESTAMPTZ,
+			created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS alert_events (
+			id              TEXT PRIMARY KEY,
+			rule_id         TEXT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+			rule_name       TEXT NOT NULL,
+			severity        TEXT NOT NULL,
+			message         TEXT NOT NULL,
+			fired_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			resolved_at     TIMESTAMPTZ,
+			acknowledged_at TIMESTAMPTZ
+		)`,
 		// otel_metrics table
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
 			id         TEXT PRIMARY KEY,
@@ -56,6 +77,18 @@ func (d PostgresDriver) Migrate(ctx context.Context, db *sql.DB) error {
 			value      DOUBLE PRECISION NOT NULL DEFAULT 0,
 			labels     JSONB NOT NULL DEFAULT '{}',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS node_stats (
+			id           TEXT PRIMARY KEY,
+			cpu_percent  DOUBLE PRECISION NOT NULL DEFAULT 0,
+			mem_used     BIGINT NOT NULL DEFAULT 0,
+			mem_total    BIGINT NOT NULL DEFAULT 0,
+			disk_used    BIGINT NOT NULL DEFAULT 0,
+			disk_total   BIGINT NOT NULL DEFAULT 0,
+			load_1       DOUBLE PRECISION NOT NULL DEFAULT 0,
+			load_5       DOUBLE PRECISION NOT NULL DEFAULT 0,
+			load_15      DOUBLE PRECISION NOT NULL DEFAULT 0,
+			recorded_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 	} {
 		db.ExecContext(ctx, q)

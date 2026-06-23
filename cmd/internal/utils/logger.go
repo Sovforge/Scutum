@@ -166,6 +166,15 @@ func AppendAudit(e AuditEntry) {
 	}
 }
 
+// spanExportCh receives copies of spans for forwarding to an external OTLP
+// collector. Nil when no exporter is registered. Non-blocking send — spans are
+// dropped on overflow rather than blocking the request path.
+var spanExportCh chan TraceEntry
+
+// RegisterSpanExportChan sets the channel that will receive span copies for
+// external export. Must be called before the first AppendSpan call.
+func RegisterSpanExportChan(ch chan TraceEntry) { spanExportCh = ch }
+
 func appendTrace(e TraceEntry) {
 	traceRingMu.Lock()
 	defer traceRingMu.Unlock()
@@ -175,6 +184,12 @@ func appendTrace(e TraceEntry) {
 	traceRing = append(traceRing, e)
 	if globalSink != nil {
 		globalSink.PersistTrace(e)
+	}
+	if spanExportCh != nil {
+		select {
+		case spanExportCh <- e:
+		default: // drop on overflow rather than blocking
+		}
 	}
 }
 

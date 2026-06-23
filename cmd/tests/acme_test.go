@@ -55,7 +55,7 @@ func TestSystemHandler_TLSModeNone(t *testing.T) {
 	os.Unsetenv("ACME_EMAIL")
 	os.Unsetenv("CERT_FILE")
 
-	h := handlers.NewSystemHandler()
+	h := handlers.NewSystemHandler(nil, nil)
 	req := httptest.NewRequest("GET", "/system/tls-mode", nil)
 	w := httptest.NewRecorder()
 	h.HandleTLSMode(w, req)
@@ -73,7 +73,7 @@ func TestSystemHandler_TLSModeACME(t *testing.T) {
 	t.Setenv("ACME_DOMAIN", "acme.example.com")
 	t.Setenv("ACME_EMAIL", "admin@example.com")
 
-	h := handlers.NewSystemHandler()
+	h := handlers.NewSystemHandler(nil, nil)
 	req := httptest.NewRequest("GET", "/system/tls-mode", nil)
 	w := httptest.NewRecorder()
 	h.HandleTLSMode(w, req)
