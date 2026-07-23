@@ -1,0 +1,25 @@
+.resource {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 120px;
+}
+.track {
+  flex: 1;
+  height: 4px;
+  background: var(--ink-line-strong);
+  border-radius: 999px;
+  overflow: hidden;
+  min-width: 50px;
+}
+.fill {
+  height: 100%;
+  border-radius: 999px;
+}
+.val {
+  font-size: 0.72rem;
+  color: var(--paper-faint);
+  white-space: nowrap;
+  min-width: 2.6rem;
+  text-align: right;
+}

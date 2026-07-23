@@ -1,0 +1,106 @@
+.passwordLabel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.forgotLink {
+  font-family: var(--body);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--blueprint-bright);
+  text-decoration: none;
+}
+.forgotLink:hover {
+  color: var(--rust-bright);
+}
+
+.backBtn {
+  margin-top: 0.6rem;
+}
+
+/* ── MFA ────────────────────────────────────────────────────────── */
+
+.mfaCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.4rem;
+  background: var(--ink);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  margin-bottom: 1.25rem;
+}
+.mfaIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--blueprint) 18%, transparent);
+  color: var(--blueprint-bright);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mfaLabel {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--paper-faint);
+  text-align: center;
+}
+.mfaInput {
+  font-family: var(--mono);
+  text-align: center;
+  font-size: 1.4rem;
+  letter-spacing: 0.3em;
+  max-width: 180px;
+  color: var(--paper);
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.5rem;
+  outline: none;
+}
+.mfaInput:focus {
+  border-color: var(--rust-bright);
+}
+
+/* ── SSO ────────────────────────────────────────────────────────── */
+
+.ssoDivider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.5rem 0 1rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--paper-dim);
+}
+.ssoDivider span:first-child,
+.ssoDivider span:last-child {
+  flex: 1;
+  height: 1px;
+  background: var(--ink-line);
+}
+
+.ssoButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.ssoBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ink);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  color: var(--paper);
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.ssoBtn:hover {
+  background: var(--ink-raised);
+  border-color: var(--paper-dim);
+}

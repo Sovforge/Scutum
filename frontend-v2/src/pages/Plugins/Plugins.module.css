@@ -1,0 +1,143 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Report header ──────────────────────────────────────────────── */
+
+.reportHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reportTitle {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+.calloutWrap {
+  margin: 0;
+}
+
+/* ── Load plugin form ───────────────────────────────────────────── */
+
+.loadForm {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  margin: 1rem 1.15rem;
+  padding: 1.1rem 1.15rem 1.25rem;
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--ink);
+}
+
+.loadFields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1.25rem;
+}
+.loadFields > :global(.field) {
+  flex: 1;
+  min-width: 220px;
+  margin-bottom: 0;
+}
+
+.formError {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+
+.loadActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Native file input sits invisibly over the styled label so the whole
+   control stays clickable without inheriting the browser's own
+   file-picker chrome. Same pattern as Containers/Kubernetes. */
+.dropzone {
+  position: relative;
+}
+.dropzoneInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.dropzoneLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px dashed var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  color: var(--paper-dim);
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+.dropzoneLabel svg {
+  flex-shrink: 0;
+}
+.dropzone:hover .dropzoneLabel,
+.dropzoneInput:focus-visible ~ .dropzoneLabel {
+  border-color: var(--rust-bright);
+  color: var(--paper);
+  background: color-mix(in srgb, var(--rust) 6%, transparent);
+}
+.dropzoneActive .dropzoneLabel {
+  border-style: solid;
+  border-color: var(--blueprint);
+  color: var(--paper);
+  background: color-mix(in srgb, var(--blueprint) 10%, transparent);
+}
+.dropzoneActive .dropzoneLabel svg {
+  color: var(--blueprint-bright);
+}
+
+.dropzoneFileName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+.dropzoneHint {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-xs);
+  padding: 0.1rem 0.4rem;
+}
+
+/* ── Table extras ───────────────────────────────────────────────── */
+
+.unloadBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--paper-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.unloadBtn:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}

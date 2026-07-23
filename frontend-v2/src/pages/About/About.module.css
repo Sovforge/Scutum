@@ -1,0 +1,104 @@
+.page {
+  position: relative;
+  overflow: hidden;
+  background: var(--ink);
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+.hero {
+  position: relative;
+  z-index: 1;
+  padding: clamp(3rem, 8vw, 6rem) clamp(1.5rem, 5vw, 4rem) clamp(2rem, 6vw, 3rem);
+  max-width: 800px;
+}
+
+.title {
+  font-size: clamp(2rem, 4.4vw, 3rem);
+  margin-bottom: 1.5rem;
+}
+
+.prose {
+  font-size: 1.02rem;
+  line-height: 1.7;
+  color: var(--paper-faint);
+  max-width: 62ch;
+}
+.prose + .prose {
+  margin-top: 1.1rem;
+}
+
+.api {
+  position: relative;
+  z-index: 1;
+  padding: clamp(2rem, 6vw, 3rem) clamp(1.5rem, 5vw, 4rem) clamp(3rem, 8vw, 5rem);
+  border-top: 1px solid var(--ink-line);
+  flex: 1;
+}
+
+.apiTitle {
+  font-size: clamp(1.6rem, 3.2vw, 2.2rem);
+  margin-bottom: 1.75rem;
+}
+
+.tableFrame {
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.path {
+  color: var(--paper);
+}
+
+.methodBadge {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.methodGet {
+  background: color-mix(in srgb, var(--blueprint) 20%, transparent);
+  color: var(--blueprint-bright);
+}
+.methodPost {
+  background: color-mix(in srgb, var(--rust) 20%, transparent);
+  color: var(--rust-bright);
+}
+.methodDelete {
+  background: color-mix(in srgb, var(--danger) 25%, transparent);
+  color: var(--danger);
+}
+
+.footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 1.75rem clamp(1.5rem, 5vw, 4rem);
+  border-top: 1px solid var(--ink-line);
+  background: var(--ink-raised);
+}
+
+.footerLinks {
+  display: flex;
+  gap: 1.5rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--paper-faint);
+}
+.footerLinks a {
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.footerLinks a:hover {
+  color: var(--paper);
+}

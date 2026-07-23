@@ -1,0 +1,45 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Report header ──────────────────────────────────────────────── */
+
+.reportHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reportTitle {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+.manifestNo {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+
+/* ── Topology + Nodes ───────────────────────────────────────────── */
+
+/* Single column until the container (the AppShell content area, which
+   already accounts for sidebar width) has room for both side by side. */
+.topologyRow {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+  /* stretch (grid default) — the shorter Nodes card should match the
+     topology card's height rather than shrink to its own content. */
+}
+
+@container (min-width: 860px) {
+  .topologyRow {
+    grid-template-columns: 1.4fr 1fr;
+  }
+}

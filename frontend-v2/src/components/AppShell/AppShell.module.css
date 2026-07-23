@@ -1,0 +1,131 @@
+.shell {
+  min-height: 100svh;
+  background: var(--ink);
+  display: flex;
+}
+/* Smooth cross-fade when the account-card theme toggle flips light/dark —
+   scoped to the app shell only, since the dark-only marketing pages never
+   trigger this. Universal selector has zero specificity, so any component
+   that already declares its own `transition` overrides this default. */
+.shell,
+.shell * {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.menuBtn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--paper);
+  cursor: pointer;
+  padding: 0.2rem;
+  flex-shrink: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 1rem clamp(1rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--ink-line);
+  position: sticky;
+  top: 0;
+  background: var(--ink);
+  z-index: 10;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--paper);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  background: var(--ink);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem 0.4rem 0.7rem;
+  color: var(--paper-dim);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.searchBtn:hover {
+  color: var(--paper);
+  border-color: var(--paper-dim);
+}
+.searchBtnLabel {
+  font-size: 0.8rem;
+}
+.searchBtnKbd {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--paper-dim);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-xs);
+  padding: 0.1rem 0.35rem;
+}
+
+@media (max-width: 640px) {
+  .searchBtnLabel {
+    display: none;
+  }
+}
+
+.main {
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+  padding: clamp(1.25rem, 3vw, 2rem) clamp(1rem, 4vw, 2.5rem) clamp(2rem, 5vw, 3rem);
+  /* Lets page content use container queries (e.g. Dashboard's topology/nodes
+     layout) keyed to actual available width, not raw viewport width — stays
+     correct whether the sidebar is expanded or collapsed. */
+  container-type: inline-size;
+  /* Faint blueprint graph-paper texture behind the cards, instead of a flat
+     fill — only shows in the negative space between/around them. Sized in
+     vmin (not a fixed px tile) so the dot pitch scales with the viewport
+     instead of looking sparse on a large monitor or cramped on a small one. */
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--paper) 10%, transparent) 1px, transparent 1px);
+  background-size: 2vmin 2vmin;
+}
+
+/* Staggered entrance for each page's top-level blocks (KPI grid, topology
+   row, table section, ...) — coarse, per-block stagger rather than
+   per-element, so it reads as one considered reveal instead of visual noise. */
+.main > * > * {
+  animation: rise-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.main > * > *:nth-child(2) {
+  animation-delay: 0.06s;
+}
+.main > * > *:nth-child(3) {
+  animation-delay: 0.12s;
+}
+.main > * > *:nth-child(4) {
+  animation-delay: 0.18s;
+}
+.main > * > *:nth-child(n + 5) {
+  animation-delay: 0.24s;
+}
+
+@media (max-width: 880px) {
+  .menuBtn {
+    display: flex;
+  }
+}

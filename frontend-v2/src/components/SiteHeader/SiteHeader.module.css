@@ -1,0 +1,36 @@
+.nav {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.6rem clamp(1.5rem, 5vw, 4rem);
+  border-bottom: 1px solid var(--ink-line);
+}
+
+.navLinks {
+  display: flex;
+  gap: 2rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--paper-faint);
+}
+.navLinks a {
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.navLinks a:hover {
+  color: var(--paper);
+}
+
+.navCta {
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .navLinks {
+    display: none;
+  }
+}

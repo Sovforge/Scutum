@@ -1,0 +1,31 @@
+{
+  "name": "frontend-v2",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "theme:gen": "esbuild scripts/generate-theme.mjs --bundle --platform=node --format=esm --outfile=scripts/.generate-theme.bundle.mjs && node scripts/.generate-theme.bundle.mjs && rm scripts/.generate-theme.bundle.mjs"
+  },
+  "dependencies": {
+    "@material/material-color-utilities": "^0.4.0",
+    "lucide-react": "^1.24.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.1",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "esbuild": "^0.28.1",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}

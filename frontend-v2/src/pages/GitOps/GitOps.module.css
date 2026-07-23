@@ -1,0 +1,121 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Report header ──────────────────────────────────────────────── */
+
+.reportHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reportTitle {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+/* ── Add repo form ──────────────────────────────────────────────── */
+
+.addForm {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  margin: 1rem 1.15rem;
+  padding: 1.1rem 1.15rem 1.25rem;
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--ink);
+}
+
+.calloutWrap {
+  margin: 0;
+}
+
+.addFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem 1.25rem;
+}
+.addFields > :global(.field) {
+  margin-bottom: 0;
+}
+
+.formError {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+
+.addActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Table row actions ──────────────────────────────────────────── */
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.rowActions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--paper-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.rowActions button:hover {
+  color: var(--paper);
+  background: color-mix(in srgb, var(--paper) 8%, transparent);
+}
+.rowActions button.rowActionDanger:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+
+/* ── Sync history ───────────────────────────────────────────────── */
+
+.historyList {
+  display: flex;
+  flex-direction: column;
+}
+
+.historyRow {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.65rem 1.15rem;
+  border-bottom: 1px solid var(--ink-line);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+.historyRow:last-child {
+  border-bottom: none;
+}
+
+.historyTime {
+  color: var(--paper-dim);
+  flex-shrink: 0;
+}
+
+.historyRepo {
+  color: var(--paper);
+  flex-shrink: 0;
+}
+
+.historyMessage {
+  color: var(--paper-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

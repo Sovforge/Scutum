@@ -1,0 +1,56 @@
+/* Horizontal scroll, not wrap — a tab bar that wraps to a second row reads
+   as broken (and eats vertical space); one that scrolls sideways is a
+   standard, touch-friendly mobile pattern. Scrollbar hidden since the
+   native momentum-scroll affordance on touch is enough of a hint. */
+.bar {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--ink-line);
+  padding-bottom: 0.5rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.bar::-webkit-scrollbar {
+  display: none;
+}
+.barSecondary {
+  gap: 0.4rem;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--paper-dim);
+  font-family: var(--body);
+  font-size: 0.85rem;
+  padding: 0.5rem 0.85rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.tab:hover {
+  color: var(--paper);
+  background: color-mix(in srgb, var(--paper) 8%, transparent);
+}
+
+.tabSecondary {
+  font-size: 0.8rem;
+  padding: 0.4rem 0.7rem;
+}
+
+.tabActivePrimary {
+  color: var(--rust-bright);
+  border-color: var(--ink-line-strong);
+  background: color-mix(in srgb, var(--rust) 12%, transparent);
+}
+
+.tabActiveSecondary {
+  color: var(--blueprint-bright);
+  background: color-mix(in srgb, var(--blueprint) 14%, transparent);
+}
