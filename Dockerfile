@@ -6,14 +6,13 @@ COPY frontend/ ./
 RUN npm run generate
 
 FROM golang:1.25-alpine AS builder
-ARG LICENSE_PUBLIC_KEY=""
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /app/frontend/.output/public/ ./cmd/api/dist/
 RUN CGO_ENABLED=0 go build \
-    -ldflags="-s -w -X scutum/cmd/internal/license.publicKeyB64=${LICENSE_PUBLIC_KEY}" \
+    -ldflags="-s -w" \
     -o scutum ./cmd/api
 
 FROM golang:1.25-alpine AS sbom

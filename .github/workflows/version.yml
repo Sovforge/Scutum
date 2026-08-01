@@ -97,8 +97,10 @@ jobs:
 
       - name: Summary
         run: |
-          echo "### Released ${{ steps.ver.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Version bump committed to \`develop\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`develop\` merged into \`main\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Tag \`${{ steps.ver.outputs.tag }}\` pushed → **Release** workflow building now" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Released ${{ steps.ver.outputs.tag }}"
+            echo ""
+            echo "- Version bump committed to \`develop\`"
+            echo "- \`develop\` merged into \`main\`"
+            echo "- Tag \`${{ steps.ver.outputs.tag }}\` pushed → **Release** workflow building now"
+          } >> "$GITHUB_STEP_SUMMARY"

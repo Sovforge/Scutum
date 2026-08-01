@@ -47,6 +47,18 @@ tags:
     description: Edge-node configuration distribution
   - name: Recovery
     description: Emergency KMS key recovery via Shamir secret sharing
+  - name: SSO
+    description: OIDC/OAuth2 single sign-on (Microsoft, GitHub, Authentik, Keycloak, generic OIDC)
+  - name: Federation
+    description: Hub-to-hub federation — link separate Scutum meshes over WireGuard
+  - name: Compliance
+    description: EU Cyber Resilience Act (CRA) compliance reporting
+  - name: SCIM
+    description: SCIM 2.0 user provisioning for identity providers (Okta, Azure AD, etc.), plus token management
+  - name: Webhooks
+    description: Outbound event notifications for mesh/container/deployment activity
+  - name: Audit
+    description: Audit log forwarding to external SIEM/log-aggregation endpoints
 
 components:
   securitySchemes:
@@ -60,6 +72,13 @@ components:
       in: header
       name: X-API-Key
       description: API key obtained from `POST /auth/keys`
+    ScimBearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        SCIM provisioning token obtained from `POST /scim/tokens`. Only valid
+        against the `/scim/v2/*` protocol endpoints — separate from the JWT/API
+        key used everywhere else.
 
   parameters:
     ContainerID:
@@ -710,6 +729,633 @@ components:
           type: array
           items:
             type: string
+
+    # ── Auth: MFA / Recovery ────────────────────────────────────────────────
+    MFAStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+      example:
+        enabled: false
+
+    MFASetupResponse:
+      type: object
+      properties:
+        secret:
+          type: string
+          description: Base32 TOTP secret — shown once, stored server-side pending confirmation via `/auth/mfa/enable`
+          example: JBSWY3DPEHPK3PXP
+        uri:
+          type: string
+          description: otpauth:// URI, encode as a QR code or enter manually into an authenticator app
+          example: otpauth://totp/Scutum:alice?secret=JBSWY3DPEHPK3PXP&issuer=Scutum
+        qr_code:
+          type: string
+          format: byte
+          description: Base64-encoded PNG of the QR code for the URI above
+
+    MFACodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: 6-digit TOTP code from the user's authenticator app
+          example: "123456"
+
+    ForgotPasswordRequest:
+      type: object
+      required: [username, new_password]
+      properties:
+        username:
+          type: string
+          example: alice
+        new_password:
+          type: string
+          minLength: 12
+        recovery_code:
+          type: string
+          description: One of the user's unused recovery codes. Required unless `totp_code` is supplied.
+          example: scutum-erc-7f3a-91bd
+        totp_code:
+          type: string
+          description: Current 6-digit TOTP code. Only valid if the account has MFA enabled. Required unless `recovery_code` is supplied.
+          example: "123456"
+
+    RecoveryCodeStatus:
+      type: object
+      properties:
+        remaining:
+          type: integer
+          description: Number of unused recovery codes left
+      example:
+        remaining: 7
+
+    RecoveryCodesResponse:
+      type: object
+      properties:
+        recovery_codes:
+          type: array
+          description: Freshly generated plaintext codes — shown once, store them securely. Regenerating invalidates all previous codes.
+          items:
+            type: string
+          example:
+            - scutum-erc-7f3a-91bd
+            - scutum-erc-2c88-40ee
+            - scutum-erc-9a01-6f7c
+
+    # ── SSO ───────────────────────────────────────────────────────────────────
+    SSOProvider:
+      type: object
+      properties:
+        id:
+          type: string
+          example: github
+        name:
+          type: string
+          example: GitHub
+        icon:
+          type: string
+          example: github
+      description: Only providers with their client ID/secret env vars configured are listed.
+
+    # ── Federation ───────────────────────────────────────────────────────────
+    FederationPeer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: hub-berlin
+        hub_url:
+          type: string
+          example: https://hub-berlin.example.com
+        wg_endpoint:
+          type: string
+          example: 203.0.113.10:51820
+        wg_public_key:
+          type: string
+          example: RtY6WsD4FgJ1AeB0CHZ8mQvX2N9Lp3K7=
+        mesh_cidr:
+          type: string
+          example: 10.200.0.0/24
+        allowed_ips:
+          type: string
+          example: 10.200.0.0/24
+        status:
+          type: string
+          enum: [connected, pending, error]
+          example: connected
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      example:
+        id: 8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+        name: hub-berlin
+        hub_url: https://hub-berlin.example.com
+        wg_endpoint: 203.0.113.10:51820
+        wg_public_key: RtY6WsD4FgJ1AeB0CHZ8mQvX2N9Lp3K7=
+        mesh_cidr: 10.200.0.0/24
+        allowed_ips: 10.200.0.0/24
+        status: connected
+        last_seen: "2026-07-14T09:10:00Z"
+        created_at: "2026-06-01T10:00:00Z"
+
+    CreateFederationPeerRequest:
+      type: object
+      required: [name, wg_endpoint, wg_public_key, mesh_cidr]
+      properties:
+        name:
+          type: string
+          example: hub-tokyo
+        hub_url:
+          type: string
+          example: https://hub-tokyo.example.com
+        wg_endpoint:
+          type: string
+          example: 203.0.113.20:51820
+        wg_public_key:
+          type: string
+          description: Base64-encoded WireGuard public key
+        mesh_cidr:
+          type: string
+          example: 10.201.0.0/24
+        allowed_ips:
+          type: string
+          description: Defaults to `mesh_cidr` if omitted
+          example: 10.201.0.0/24
+
+    # ── Compliance ───────────────────────────────────────────────────────────
+    CRAReport:
+      type: object
+      description: |
+        Full CRA compliance report. `GET /compliance/report` also accepts a
+        `format` query parameter (`json` default, `csv`, or `text`) — non-JSON
+        formats return the same underlying data as a downloadable file instead
+        of this schema.
+      properties:
+        meta:
+          type: object
+          properties:
+            generated_at:
+              type: string
+              format: date-time
+            version:
+              type: string
+              example: 1.0.0
+            standard:
+              type: string
+              example: EU Cyber Resilience Act (CRA) 2024/2847
+        system:
+          type: object
+          properties:
+            version:
+              type: string
+              example: 1.0.0
+            audit_enabled:
+              type: boolean
+              example: true
+        users:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 4
+            users:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  username:
+                    type: string
+                  created_at:
+                    type: string
+        mesh:
+          type: object
+          properties:
+            total_nodes:
+              type: integer
+              example: 3
+            nodes:
+              type: array
+              items:
+                $ref: '#/components/schemas/NodeRecord'
+        audit:
+          type: object
+          properties:
+            total_events:
+              type: integer
+              example: 1842
+            by_outcome:
+              type: object
+              additionalProperties:
+                type: integer
+              example: {success: 1790, failure: 52}
+            by_action:
+              type: object
+              additionalProperties:
+                type: integer
+              example: {LOGIN: 340, CONTAINER_DEPLOY: 12}
+            failed_logins:
+              type: integer
+              example: 6
+            permission_denials:
+              type: integer
+              example: 2
+        security:
+          type: object
+          properties:
+            mesh_encryption:
+              type: string
+              example: WireGuard (ChaCha20Poly1305 + Curve25519)
+            auth_methods:
+              type: array
+              items:
+                type: string
+              example: ["password+TOTP", "API key", "SSO (OIDC/OAuth2)"]
+            rate_limiting_enabled:
+              type: boolean
+              example: true
+            audit_retention_days:
+              type: integer
+              example: 365
+        key_management:
+          type: object
+          properties:
+            hub_hmac_key_present:
+              type: boolean
+              example: true
+            wg0_config_present:
+              type: boolean
+              example: true
+        incidents:
+          type: array
+          description: Failed logins and permission denials pulled from the audit log
+          items:
+            type: object
+            properties:
+              time:
+                type: string
+                format: date-time
+              action:
+                type: string
+              actor:
+                type: string
+              outcome:
+                type: string
+              client_ip:
+                type: string
+              path:
+                type: string
+      example:
+        meta:
+          generated_at: "2026-07-14T12:00:00Z"
+          version: 1.0.0
+          standard: EU Cyber Resilience Act (CRA) 2024/2847
+        system:
+          version: 1.0.0
+          audit_enabled: true
+        users:
+          total: 2
+          users:
+            - id: usr_01j8z3k
+              username: alice
+              created_at: "2026-05-01T08:00:00Z"
+        mesh:
+          total_nodes: 1
+          nodes:
+            - id: n_core01
+              name: core-01
+              type: hub
+              address: 10.0.0.1:51820
+              public_key: abc123==
+        audit:
+          total_events: 214
+          by_outcome: {success: 208, failure: 6}
+          by_action: {LOGIN: 40, CONTAINER_DEPLOY: 3}
+          failed_logins: 2
+          permission_denials: 1
+        security:
+          mesh_encryption: WireGuard (ChaCha20Poly1305 + Curve25519)
+          auth_methods: ["password+TOTP", "API key", "SSO (OIDC/OAuth2)"]
+          rate_limiting_enabled: true
+          audit_retention_days: 365
+        key_management:
+          hub_hmac_key_present: true
+          wg0_config_present: true
+        incidents: []
+
+    # ── SCIM ─────────────────────────────────────────────────────────────────
+    SCIMUser:
+      type: object
+      description: SCIM 2.0 core User resource, as returned by the `/scim/v2/Users*` protocol endpoints.
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+        id:
+          type: string
+          format: uuid
+        userName:
+          type: string
+          example: alice
+        emails:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+                format: email
+              primary:
+                type: boolean
+        active:
+          type: boolean
+        meta:
+          type: object
+          properties:
+            resourceType:
+              type: string
+              example: User
+            created:
+              type: string
+              format: date-time
+            lastModified:
+              type: string
+              format: date-time
+            location:
+              type: string
+              example: /scim/v2/Users/8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+      example:
+        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+        id: 8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+        userName: alice
+        emails:
+          - value: alice@example.com
+            primary: true
+        active: true
+        meta:
+          resourceType: User
+          created: "2026-06-01T10:00:00Z"
+          lastModified: "2026-06-01T10:00:00Z"
+          location: /scim/v2/Users/8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+
+    SCIMListResponse:
+      type: object
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+        totalResults:
+          type: integer
+        startIndex:
+          type: integer
+        itemsPerPage:
+          type: integer
+        Resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SCIMUser'
+
+    SCIMError:
+      type: object
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:api:messages:2.0:Error"]
+        status:
+          type: string
+          example: "404"
+        detail:
+          type: string
+          example: user not found
+
+    SCIMCreateUserRequest:
+      type: object
+      required: [userName]
+      properties:
+        userName:
+          type: string
+          example: alice
+        emails:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+                format: email
+              primary:
+                type: boolean
+        active:
+          type: boolean
+
+    SCIMTokenInfo:
+      type: object
+      description: Note this record has no JSON tags server-side, so field names are capitalized (Go's default encoding), unlike every other resource in this API.
+      properties:
+        ID:
+          type: string
+          format: uuid
+        Description:
+          type: string
+          example: Okta provisioning
+        CreatedAt:
+          type: string
+          format: date-time
+      example:
+        ID: 8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+        Description: Okta provisioning
+        CreatedAt: "2026-06-01T10:00:00Z"
+
+    CreateSCIMTokenRequest:
+      type: object
+      properties:
+        description:
+          type: string
+          example: Okta provisioning
+
+    CreateSCIMTokenResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        token:
+          type: string
+          description: Raw bearer token — shown once, use it as the SCIM app's API token
+      example:
+        id: 8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+        token: JGm3q9tL2yX7vN0aRk1cWzB8dP6eF4hS
+
+    # ── Webhooks ─────────────────────────────────────────────────────────────
+    WebhookConfig:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Deploy notifications
+        url:
+          type: string
+          example: https://hooks.example.com/scutum
+        events:
+          type: array
+          items:
+            type: string
+          example: [container.deployed, container.stopped]
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+      example:
+        id: 8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+        name: Deploy notifications
+        url: https://hooks.example.com/scutum
+        events: [container.deployed, container.stopped]
+        enabled: true
+        created_at: "2026-06-01T10:00:00Z"
+
+    CreateWebhookRequest:
+      type: object
+      required: [name, url, events]
+      properties:
+        name:
+          type: string
+          example: Deploy notifications
+        url:
+          type: string
+          example: https://hooks.example.com/scutum
+        secret:
+          type: string
+          description: Shared secret used to sign delivered payloads
+        events:
+          type: array
+          items:
+            type: string
+          example: [container.deployed, container.stopped]
+        enabled:
+          type: boolean
+          default: true
+
+    # ── Audit forwarders ─────────────────────────────────────────────────────
+    AuditForwarder:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: splunk-hec
+        url:
+          type: string
+          example: https://splunk.example.com:8088/services/collector
+        format:
+          type: string
+          enum: [json, cef]
+          example: json
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+      example:
+        id: 8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+        name: splunk-hec
+        url: https://splunk.example.com:8088/services/collector
+        format: json
+        enabled: true
+        created_at: "2026-06-01T10:00:00Z"
+
+    CreateAuditForwarderRequest:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          example: splunk-hec
+        url:
+          type: string
+          example: https://splunk.example.com:8088/services/collector
+        format:
+          type: string
+          enum: [json, cef]
+          default: json
+
+    # ── Node groups & labels ─────────────────────────────────────────────────
+    NodeGroup:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: edge-eu
+        description:
+          type: string
+          example: European edge nodes
+        members:
+          type: array
+          items:
+            type: string
+          description: Node IDs currently in the group
+        created_at:
+          type: string
+          format: date-time
+      example:
+        id: 8f14e45f-ceea-467e-b9e4-9c1f2d3a4b5c
+        name: edge-eu
+        description: European edge nodes
+        members: [n_core01, n_edge02]
+        created_at: "2026-06-01T10:00:00Z"
+
+    CreateNodeGroupRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: edge-eu
+        description:
+          type: string
+          example: European edge nodes
+
+    AddGroupMemberRequest:
+      type: object
+      required: [node_id]
+      properties:
+        node_id:
+          type: string
+          example: n_edge02
+
+    NodeLabels:
+      type: object
+      additionalProperties:
+        type: string
+      description: Arbitrary key/value labels attached to a node
+      example:
+        region: eu-west
+        role: edge
 
   responses:
     Unauthorized:
@@ -1998,6 +2644,1217 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+
+  # ── Auth: MFA / TOTP ─────────────────────────────────────────────────────
+  /auth/mfa/status:
+    get:
+      tags: [Auth]
+      summary: Get MFA status for the current user
+      responses:
+        '200':
+          description: MFA status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFAStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/mfa/setup:
+    post:
+      tags: [Auth]
+      summary: Begin TOTP setup
+      description: |
+        Generates a new TOTP secret and stores it pending confirmation. MFA is
+        NOT enabled until the returned code is confirmed via `POST /auth/mfa/enable`.
+      responses:
+        '200':
+          description: TOTP secret and QR code generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFASetupResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/mfa/enable:
+    post:
+      tags: [Auth]
+      summary: Confirm TOTP setup and enable MFA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFACodeRequest'
+      responses:
+        '200':
+          description: MFA enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFAStatus'
+              example:
+                enabled: true
+        '400':
+          description: No pending MFA setup — call `/auth/mfa/setup` first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Invalid TOTP code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/mfa/disable:
+    post:
+      tags: [Auth]
+      summary: Disable MFA
+      description: Requires a valid current TOTP code to confirm the change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFACodeRequest'
+      responses:
+        '200':
+          description: MFA disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFAStatus'
+              example:
+                enabled: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Invalid TOTP code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Reset a forgotten password
+      description: |
+        Resets a user's password using either an unused recovery code or (if
+        MFA is enabled on the account) a valid TOTP code. Rate-limited.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '200':
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: password updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid username, recovery code, or TOTP code (same error regardless, to avoid enumeration)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/recovery-codes:
+    get:
+      tags: [Auth]
+      summary: Count remaining recovery codes
+      responses:
+        '200':
+          description: Remaining code count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodeStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/recovery-codes/regenerate:
+    post:
+      tags: [Auth]
+      summary: Regenerate recovery codes
+      description: Invalidates all existing recovery codes and issues a fresh set. The plaintext codes are only ever shown in this response.
+      responses:
+        '200':
+          description: New recovery codes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── SSO ──────────────────────────────────────────────────────────────────
+  /auth/sso/providers:
+    get:
+      tags: [SSO]
+      summary: List configured SSO providers
+      description: Returns only providers whose client ID/secret env vars are set. An empty array means no SSO provider is configured.
+      security: []
+      responses:
+        '200':
+          description: Configured providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SSOProvider'
+              example:
+                - id: github
+                  name: GitHub
+                  icon: github
+                - id: keycloak
+                  name: Keycloak
+                  icon: keycloak
+
+  /auth/sso/{provider}:
+    get:
+      tags: [SSO]
+      summary: Start SSO login
+      description: Redirects to the provider's OAuth2/OIDC authorization URL.
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [microsoft, github, authentik, keycloak, oidc]
+      responses:
+        '302':
+          description: Redirect to the identity provider's authorization endpoint
+        '400':
+          description: Unknown provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/sso/{provider}/callback:
+    get:
+      tags: [SSO]
+      summary: SSO callback
+      description: |
+        OAuth2/OIDC redirect target. Exchanges the authorization code, resolves
+        or provisions the local user (matched by existing SSO identity, then by
+        email, then created new), and redirects to `/#sso-token=<jwt>`.
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [microsoft, github, authentik, keycloak, oidc]
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to `/#sso-token=<jwt>` on success
+        '400':
+          description: Invalid state, unknown provider, or code exchange failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── Federation ───────────────────────────────────────────────────────────
+  /federation/peers:
+    get:
+      tags: [Federation]
+      summary: List federated hubs
+      responses:
+        '200':
+          description: Peer list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FederationPeer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Federation]
+      summary: Federate a new hub
+      description: Registers the peer and adds it as a WireGuard peer on `wg0` with a persistent keepalive.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFederationPeerRequest'
+      responses:
+        '201':
+          description: Peer created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederationPeer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /federation/peers/{id}:
+    get:
+      tags: [Federation]
+      summary: Get a federated peer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Peer record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FederationPeer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Federation]
+      summary: Unfederate a peer
+      description: Removes the peer record and its WireGuard peer entry from `wg0`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Unfederated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Node groups & labels ─────────────────────────────────────────────────
+  /nodes/{id}/labels:
+    get:
+      tags: [Nodes]
+      summary: Get a node's labels
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Label map
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeLabels'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      tags: [Nodes]
+      summary: Replace a node's labels
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeLabels'
+      responses:
+        '200':
+          description: Labels updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeLabels'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /groups:
+    get:
+      tags: [Nodes]
+      summary: List node groups
+      responses:
+        '200':
+          description: Group list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NodeGroup'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Nodes]
+      summary: Create a node group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNodeGroupRequest'
+      responses:
+        '201':
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /groups/{id}:
+    get:
+      tags: [Nodes]
+      summary: Get a node group
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Group record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeGroup'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Nodes]
+      summary: Update a node group
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNodeGroupRequest'
+      responses:
+        '200':
+          description: Group updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Nodes]
+      summary: Delete a node group
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /groups/{id}/nodes:
+    get:
+      tags: [Nodes]
+      summary: List nodes in a group
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Node list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NodeRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /groups/{id}/members:
+    post:
+      tags: [Nodes]
+      summary: Add a node to a group
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddGroupMemberRequest'
+      responses:
+        '204':
+          description: Member added
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /groups/{id}/members/{nodeId}:
+    delete:
+      tags: [Nodes]
+      summary: Remove a node from a group
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Member removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Compliance ───────────────────────────────────────────────────────────
+  /compliance/report:
+    get:
+      tags: [Compliance]
+      summary: Generate a CRA compliance report
+      description: |
+        Builds a point-in-time report covering users, mesh nodes, audit
+        summary statistics, security posture, and key-management status.
+      parameters:
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [json, csv, text]
+            default: json
+          description: |
+            `json` returns the structured `CRAReport` body below. `csv` returns
+            the raw audit log as `audit-log.csv`. `text` returns a
+            human-readable plaintext summary as `cra-compliance-report.txt`.
+      responses:
+        '200':
+          description: Compliance report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CRAReport'
+            text/csv:
+              schema:
+                type: string
+              example: |
+                time,action,actor,actor_id,outcome,method,path,client_ip,trace_id
+                2026-07-14T09:00:00Z,LOGIN,alice,usr_01j8z3k,success,POST,/auth/login,203.0.113.5,abc123
+            text/plain:
+              schema:
+                type: string
+              example: |
+                CRA COMPLIANCE REPORT
+                Standard : EU Cyber Resilience Act (CRA) 2024/2847
+                Generated: 2026-07-14T12:00:00Z
+                Version  : 1.0.0
+
+                === USERS ===
+                Total: 2
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── Webhooks ─────────────────────────────────────────────────────────────
+  /webhooks:
+    get:
+      tags: [Webhooks]
+      summary: List webhooks
+      responses:
+        '200':
+          description: Webhook list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WebhookConfig'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Webhooks]
+      summary: Create a webhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+      responses:
+        '201':
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /webhooks/{id}:
+    get:
+      tags: [Webhooks]
+      summary: Get a webhook
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Webhook record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookConfig'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Webhooks]
+      summary: Update a webhook
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+      responses:
+        '200':
+          description: Webhook updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Webhooks]
+      summary: Delete a webhook
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /webhooks/{id}/test:
+    post:
+      tags: [Webhooks]
+      summary: Send a test delivery
+      description: POSTs a `webhook.test` event to the configured URL and reports delivery success.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Delivered successfully (endpoint returned 2xx)
+        '400':
+          description: Invalid webhook URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          description: Delivery failed, or endpoint returned a non-2xx status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Audit forwarders ─────────────────────────────────────────────────────
+  /audit/forwarders:
+    get:
+      tags: [Audit]
+      summary: List audit log forwarders
+      responses:
+        '200':
+          description: Forwarder list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditForwarder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Audit]
+      summary: Create an audit log forwarder
+      description: A background worker polls enabled forwarders every 30 seconds and ships new audit events as JSON or CEF.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAuditForwarderRequest'
+      responses:
+        '201':
+          description: Forwarder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditForwarder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /audit/forwarders/{id}:
+    get:
+      tags: [Audit]
+      summary: Get an audit log forwarder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Forwarder record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditForwarder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Audit]
+      summary: Update an audit log forwarder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAuditForwarderRequest'
+      responses:
+        '200':
+          description: Forwarder updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditForwarder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Audit]
+      summary: Delete an audit log forwarder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── SCIM: token management (admin JWT/API key auth) ─────────────────────
+  /scim/tokens:
+    get:
+      tags: [SCIM]
+      summary: List SCIM provisioning tokens
+      responses:
+        '200':
+          description: Token list (hashes and raw tokens are never returned after creation)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SCIMTokenInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [SCIM]
+      summary: Create a SCIM provisioning token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSCIMTokenRequest'
+      responses:
+        '201':
+          description: Token created — the raw token is shown once
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSCIMTokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /scim/tokens/{id}:
+    delete:
+      tags: [SCIM]
+      summary: Revoke a SCIM provisioning token
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── SCIM: 2.0 protocol (mounted at /scim/v2, bearer token auth) ─────────
+  /scim/v2/ServiceProviderConfig:
+    get:
+      tags: [SCIM]
+      summary: SCIM ServiceProviderConfig
+      description: Static capability discovery document. Mounted outside `/api`, at `/scim/v2/ServiceProviderConfig`, and does not require authentication.
+      security: []
+      responses:
+        '200':
+          description: Capabilities
+          content:
+            application/scim+json:
+              schema:
+                type: object
+              example:
+                schemas: ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"]
+                patch: {supported: true}
+                bulk: {supported: false}
+                filter: {supported: true, maxResults: 200}
+                changePassword: {supported: false}
+                sort: {supported: false}
+                etag: {supported: false}
+                authenticationSchemes:
+                  - type: oauthbearertoken
+                    name: OAuth Bearer Token
+                    primary: true
+
+  /scim/v2/Users:
+    get:
+      tags: [SCIM]
+      summary: List/search users (SCIM)
+      description: Mounted at `/scim/v2/Users`, outside `/api`. Requires a SCIM bearer token from `POST /scim/tokens`, not a JWT/API key.
+      security:
+        - ScimBearerAuth: []
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Only `userName eq "value"` is supported
+          example: userName eq "alice"
+        - name: startIndex
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: count
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 200
+            maximum: 200
+      responses:
+        '200':
+          description: User list
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMListResponse'
+        '401':
+          description: Missing or invalid SCIM token
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+    post:
+      tags: [SCIM]
+      summary: Create a user (SCIM)
+      description: |
+        Mounted at `/scim/v2/Users`. Creates a user with a random password —
+        SCIM-provisioned users are expected to authenticate via SSO.
+      security:
+        - ScimBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMCreateUserRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '400':
+          description: userName is required or JSON is invalid
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+        '401':
+          description: Missing or invalid SCIM token
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+
+  /scim/v2/Users/{id}:
+    get:
+      tags: [SCIM]
+      summary: Get a user (SCIM)
+      security:
+        - ScimBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User record
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '401':
+          description: Missing or invalid SCIM token
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+        '404':
+          description: User not found
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+    put:
+      tags: [SCIM]
+      summary: Replace a user (SCIM)
+      security:
+        - ScimBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMCreateUserRequest'
+      responses:
+        '200':
+          description: User replaced
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '401':
+          description: Missing or invalid SCIM token
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+        '404':
+          description: User not found
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+    patch:
+      tags: [SCIM]
+      summary: Partially update a user (SCIM)
+      description: Only `replace` operations on `active` and `userName` paths are applied; other ops/paths are ignored.
+      security:
+        - ScimBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              type: object
+              properties:
+                Operations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      op:
+                        type: string
+                        example: replace
+                      path:
+                        type: string
+                        example: active
+                      value: {}
+              example:
+                Operations:
+                  - op: replace
+                    path: active
+                    value: false
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '401':
+          description: Missing or invalid SCIM token
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+        '404':
+          description: User not found
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+    delete:
+      tags: [SCIM]
+      summary: Delete a user (SCIM)
+      security:
+        - ScimBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Missing or invalid SCIM token
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+        '404':
+          description: User not found
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
 
   # ── API Docs ──────────────────────────────────────────────────────────────
   /docs:

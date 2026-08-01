@@ -30,16 +30,15 @@ import (
 	"scutum/cmd/internal/alerts"
 	"scutum/cmd/internal/auth"
 	"scutum/cmd/internal/handlers"
-	"scutum/cmd/internal/license"
-	"scutum/cmd/internal/webhooks"
 	"scutum/cmd/internal/kms"
 	"scutum/cmd/internal/metrics"
 	plugin "scutum/cmd/internal/plugins"
 	"scutum/cmd/internal/roaming"
 	"scutum/cmd/internal/store"
-	"scutum/cmd/internal/sysinfo"
 	"scutum/cmd/internal/sync"
+	"scutum/cmd/internal/sysinfo"
 	"scutum/cmd/internal/utils"
+	"scutum/cmd/internal/webhooks"
 	"scutum/cmd/internal/wireguard"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -119,27 +118,6 @@ func main() {
 	jwtSecret, err := loadOrGenerateJWTSecret(ctx, db, secretsDir)
 	if err != nil {
 		logger.Fatal("jwt secret failed", "error", err)
-	}
-
-	// --- License ---
-	var licenseWatcher *license.Watcher
-	if licensePath := os.Getenv("SCUTUM_LICENSE"); licensePath != "" {
-		data, err := os.ReadFile(licensePath)
-		if err != nil {
-			logger.Fatal("failed to read license file", "error", err, "path", licensePath)
-		}
-		claims, err := license.Verify(string(data))
-		if err != nil {
-			logger.Fatal("invalid license", "error", err, "path", licensePath)
-		}
-		logger.Info("enterprise license loaded",
-			"licensee", claims.Licensee,
-			"expires", claims.ExpiresAt.Format(time.DateOnly),
-		)
-		licenseWatcher = license.NewWatcher(licensePath, claims)
-		go licenseWatcher.Run(ctx)
-	} else {
-		logger.Info("no enterprise license configured; running in community edition mode")
 	}
 
 	// --- Plugin Runtime ---
@@ -378,11 +356,6 @@ func main() {
 		return authMW(auth.Require(db, resource, action)(http.HandlerFunc(h)))
 	}
 
-	// requireEnt gates a handler behind both authentication and a valid enterprise license.
-	requireEnt := func(feature, resource, action string, h http.HandlerFunc) http.Handler {
-		return authMW(license.Require(licenseWatcher, feature)(auth.Require(db, resource, action)(http.HandlerFunc(h))))
-	}
-
 	// requireDocker wraps require() and additionally checks that the Docker
 	// socket is present before the handler runs. Without this, missing-socket
 	// errors surface as confusing 500s instead of a clear feature-unavailable
@@ -469,12 +442,11 @@ func main() {
 	apiMux.Handle("POST /auth/mfa/enable", authMW(http.HandlerFunc(authCtrl.HandleMFAEnable)))
 	apiMux.Handle("POST /auth/mfa/disable", authMW(http.HandlerFunc(authCtrl.HandleMFADisable)))
 
-	// SSO (enterprise — public routes, but blocked without a license)
+	// SSO (public routes — no auth required before login)
 	ssoCtrl := handlers.NewSSOHandler(db, jwtSecret)
-	ssoGate := license.Require(licenseWatcher, "sso")
-	apiMux.Handle("GET /auth/sso/providers", ssoGate(http.HandlerFunc(ssoCtrl.HandleProviders)))
-	apiMux.Handle("GET /auth/sso/{provider}", ssoGate(http.HandlerFunc(ssoCtrl.HandleLogin)))
-	apiMux.Handle("GET /auth/sso/{provider}/callback", ssoGate(http.HandlerFunc(ssoCtrl.HandleCallback)))
+	apiMux.HandleFunc("GET /auth/sso/providers", ssoCtrl.HandleProviders)
+	apiMux.HandleFunc("GET /auth/sso/{provider}", ssoCtrl.HandleLogin)
+	apiMux.HandleFunc("GET /auth/sso/{provider}/callback", ssoCtrl.HandleCallback)
 
 	// Health + version (public)
 	apiMux.HandleFunc("GET /health", handlers.HealthHandler)
@@ -590,11 +562,11 @@ func main() {
 	// Operator bootstrap (admin only — used by the Kubernetes operator)
 	apiMux.Handle("GET /operator/bootstrap", require("admin", "admin", operatorCtrl.HandleBootstrap))
 
-	// Hub federation (enterprise + admin only)
-	apiMux.Handle("GET /federation/peers", requireEnt("federation", "admin", "admin", federationCtrl.HandleList))
-	apiMux.Handle("POST /federation/peers", requireEnt("federation", "admin", "admin", federationCtrl.HandleCreate))
-	apiMux.Handle("GET /federation/peers/{id}", requireEnt("federation", "admin", "admin", federationCtrl.HandleGet))
-	apiMux.Handle("DELETE /federation/peers/{id}", requireEnt("federation", "admin", "admin", federationCtrl.HandleDelete))
+	// Hub federation (admin only)
+	apiMux.Handle("GET /federation/peers", require("admin", "admin", federationCtrl.HandleList))
+	apiMux.Handle("POST /federation/peers", require("admin", "admin", federationCtrl.HandleCreate))
+	apiMux.Handle("GET /federation/peers/{id}", require("admin", "admin", federationCtrl.HandleGet))
+	apiMux.Handle("DELETE /federation/peers/{id}", require("admin", "admin", federationCtrl.HandleDelete))
 
 	// Node groups and labels
 	apiMux.Handle("GET /nodes/{id}/labels", require("nodes", "read", nodeGroupsCtrl.HandleGetLabels))
@@ -608,8 +580,8 @@ func main() {
 	apiMux.Handle("POST /groups/{id}/members", require("nodes", "write", nodeGroupsCtrl.HandleAddMember))
 	apiMux.Handle("DELETE /groups/{id}/members/{nodeId}", require("nodes", "write", nodeGroupsCtrl.HandleRemoveMember))
 
-	// CRA compliance report (enterprise + admin only)
-	apiMux.Handle("GET /compliance/report", requireEnt("compliance", "admin", "admin", complianceCtrl.HandleReport))
+	// CRA compliance report (admin only)
+	apiMux.Handle("GET /compliance/report", require("admin", "admin", complianceCtrl.HandleReport))
 	// Webhooks (admin only)
 	apiMux.Handle("GET /webhooks", require("admin", "admin", webhookCtrl.HandleList))
 	apiMux.Handle("POST /webhooks", require("admin", "admin", webhookCtrl.HandleCreate))
@@ -625,10 +597,10 @@ func main() {
 	apiMux.Handle("PUT /audit/forwarders/{id}", require("admin", "admin", auditFwdCtrl.HandleUpdate))
 	apiMux.Handle("DELETE /audit/forwarders/{id}", require("admin", "admin", auditFwdCtrl.HandleDelete))
 
-	// SCIM token management (enterprise + admin only)
-	apiMux.Handle("GET /scim/tokens", requireEnt("scim", "admin", "admin", scimCtrl.HandleListTokens))
-	apiMux.Handle("POST /scim/tokens", requireEnt("scim", "admin", "admin", scimCtrl.HandleCreateToken))
-	apiMux.Handle("DELETE /scim/tokens/{id}", requireEnt("scim", "admin", "admin", scimCtrl.HandleDeleteToken))
+	// SCIM token management (admin only)
+	apiMux.Handle("GET /scim/tokens", require("admin", "admin", scimCtrl.HandleListTokens))
+	apiMux.Handle("POST /scim/tokens", require("admin", "admin", scimCtrl.HandleCreateToken))
+	apiMux.Handle("DELETE /scim/tokens/{id}", require("admin", "admin", scimCtrl.HandleDeleteToken))
 
 	// Recovery (emergency key recovery)
 	recoveryCtrl := handlers.NewRecoveryHandler(db, kmsProvider)
@@ -729,7 +701,7 @@ func main() {
 	scimMux.Handle("PUT /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleReplaceUser)))
 	scimMux.Handle("PATCH /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandlePatchUser)))
 	scimMux.Handle("DELETE /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleDeleteUser)))
-	mainMux.Handle("/scim/v2/", license.Require(licenseWatcher, "scim")(http.StripPrefix("/scim/v2", scimMux)))
+	mainMux.Handle("/scim/v2/", http.StripPrefix("/scim/v2", scimMux))
 
 	// Nuxt generates hashed filenames under /_nuxt/ so they can be cached forever.
 	sub, _ := fs.Sub(frontendFS, "dist")
@@ -1017,7 +989,7 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 		// has not yet had a keepalive exchange.
 		for _, p := range peers {
 			if p.NodeID == node.ID {
-				nodeID := node.ID       // capture for closure
+				nodeID := node.ID        // capture for closure
 				pubKey := node.PublicKey // capture for closure
 				healer.AddPeer(sync.WGPeer{
 					IfaceName:  "wg0",
