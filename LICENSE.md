@@ -105,13 +105,9 @@ The following components are distributed under the MIT License:
 
 | Package | Copyright |
 |---------|-----------|
-| `nuxt` | Copyright © 2016-present Nuxt Team |
-| `vue` | Copyright © 2018-present Yuxi (Evan) You |
-| `vue-router` | Copyright © 2019-present Eduardo San Martin Morote |
-| `pinia` / `@pinia/nuxt` | Copyright © 2019-present Eduardo San Martin Morote |
-| `@vueuse/nuxt` | Copyright © 2019-present Anthony Fu |
-| `@nuxt/icon` | Copyright © 2022 Sébastien Chopin |
-| `@types/node` | Copyright © Microsoft Corporation |
+| `react` / `react-dom` | Copyright © Meta Platforms, Inc. and affiliates |
+| `react-router` / `react-router-dom` | Copyright © React Training 2015–2019, Remix Software 2020–2022 |
+| `zustand` | Copyright © 2019 Paul Henschel |
 
 **MIT License text:**
 
@@ -172,6 +168,7 @@ The following components are distributed under the Apache License, Version 2.0:
 | `github.com/prometheus/common` | Copyright © 2014–2015 The Prometheus Authors |
 | `github.com/prometheus/procfs` | Copyright © 2014–2015 The Prometheus Authors |
 | `go.yaml.in/yaml/v2` | Copyright © The go-yaml Authors |
+| `@material/material-color-utilities` (frontend) | Copyright © Google LLC |
 
 Full license text: <https://www.apache.org/licenses/LICENSE-2.0>
 
@@ -200,7 +197,7 @@ The following components are distributed under the ISC License:
 
 | Package | Notes |
 |---------|-------|
-| `@iconify-json/lucide` | Lucide icon set distributed via Iconify |
+| `lucide-react` | Lucide icon set, React bindings |
 
 **ISC License text:**
 

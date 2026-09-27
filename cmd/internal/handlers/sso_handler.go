@@ -18,6 +18,7 @@ import (
 	"golang.org/x/oauth2/github"
 
 	"scutum/cmd/internal/auth"
+	"scutum/cmd/internal/store"
 )
 
 type ssoStore interface {
@@ -26,6 +27,7 @@ type ssoStore interface {
 	UserBySSOIdentity(ctx context.Context, provider, subject string) (userID string, err error)
 	CreateUserWithEmail(ctx context.Context, id, username, email string) error
 	UpsertSSOIdentity(ctx context.Context, id, userID, provider, subject, email string) error
+	GetSystemSettings(ctx context.Context) (store.SystemSettings, error)
 }
 
 type SSOHandler struct {
@@ -137,13 +139,21 @@ func (h *SSOHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jwt, err := auth.IssueJWT(userID, username, h.jwtSecret, 24*time.Hour)
+	ttl := 24 * time.Hour
+	if settings, err := h.store.GetSystemSettings(r.Context()); err == nil && settings.AuthSessionTimeoutMin > 0 {
+		ttl = time.Duration(settings.AuthSessionTimeoutMin) * time.Minute
+	}
+
+	jwt, err := auth.IssueJWT(userID, username, h.jwtSecret, ttl)
 	if err != nil {
 		http.Error(w, "failed to issue token", http.StatusInternalServerError)
 		return
 	}
 
-	http.Redirect(w, r, fmt.Sprintf("/#sso-token=%s", jwt), http.StatusFound)
+	// /login is where the hash gets consumed (see Login.tsx's sso-token
+	// handling) — not "/", which is a public marketing page in this
+	// frontend, not a protected dashboard.
+	http.Redirect(w, r, fmt.Sprintf("/login#sso-token=%s", jwt), http.StatusFound)
 }
 
 func (h *SSOHandler) resolveUser(ctx context.Context, provider, subject, email, name string) (userID, username string, err error) {

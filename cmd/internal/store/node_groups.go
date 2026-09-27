@@ -133,7 +133,7 @@ func (s *Store) RemoveNodeFromGroup(ctx context.Context, groupID, nodeID string)
 
 func (s *Store) ListNodesInGroup(ctx context.Context, groupID string) ([]NodeRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT n.id,n.name,n.type,n.address,n.public_key
+		fmt.Sprintf(`SELECT n.id,n.name,n.type,n.address,n.public_key,n.status
 		             FROM nodes n JOIN node_group_members m ON m.node_id=n.id
 		             WHERE m.group_id=%s ORDER BY n.name`, s.ph(1)), groupID)
 	if err != nil {
@@ -143,7 +143,7 @@ func (s *Store) ListNodesInGroup(ctx context.Context, groupID string) ([]NodeRec
 	var out []NodeRecord
 	for rows.Next() {
 		var n NodeRecord
-		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &n.Address, &n.PublicKey); err != nil {
+		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &n.Address, &n.PublicKey, &n.Status); err != nil {
 			return nil, err
 		}
 		out = append(out, n)

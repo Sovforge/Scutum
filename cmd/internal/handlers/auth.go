@@ -10,6 +10,7 @@ import (
 	"github.com/skip2/go-qrcode"
 
 	"scutum/cmd/internal/auth"
+	"scutum/cmd/internal/store"
 
 	"github.com/google/uuid"
 )
@@ -25,6 +26,7 @@ type authStore interface {
 	CreateRecoveryCodes(ctx context.Context, userID string, codeHashes []string) error
 	UseRecoveryCode(ctx context.Context, userID, codeHash string) error
 	CountRemainingRecoveryCodes(ctx context.Context, userID string) (int, error)
+	GetSystemSettings(ctx context.Context) (store.SystemSettings, error)
 }
 
 type AuthHandler struct {
@@ -154,7 +156,18 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	token, err := auth.IssueJWT(id, req.Username, h.jwtSecret, 24*time.Hour)
+	settings, err := h.store.GetSystemSettings(r.Context())
+	if err != nil {
+		// Fall back to the documented defaults rather than blocking every
+		// login because the settings row can't be read.
+		settings = store.SystemSettings{AuthSessionTimeoutMin: 1440}
+	}
+	ttl := 24 * time.Hour
+	if settings.AuthSessionTimeoutMin > 0 {
+		ttl = time.Duration(settings.AuthSessionTimeoutMin) * time.Minute
+	}
+
+	token, err := auth.IssueJWT(id, req.Username, h.jwtSecret, ttl)
 	if err != nil {
 		http.Error(w, "failed to issue token", http.StatusInternalServerError)
 		return
@@ -163,8 +176,19 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	base := NewBaseHandler(nil)
 	base.Audit("LOGIN_SUCCESS", r, "actor", req.Username, "actor_id", id)
 
+	resp := map[string]interface{}{"token": token}
+	// Cluster policy requires MFA but this user hasn't set it up yet. They
+	// authenticated correctly, so still let them in — mfa_setup_required
+	// tells the frontend to gate the rest of the app behind the Account
+	// page's MFA setup flow rather than locking them out entirely, which
+	// would risk no admin ever being able to log back in and turn the
+	// policy back off.
+	if settings.AuthRequireMFA && !totpEnabled {
+		resp["mfa_setup_required"] = true
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": token})
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *AuthHandler) HandleCreateAPIKey(w http.ResponseWriter, r *http.Request) {

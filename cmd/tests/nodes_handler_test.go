@@ -54,6 +54,20 @@ func (f *fakeNodeStore) DeleteNode(_ context.Context, id string) error {
 	return errNotFound
 }
 
+func (f *fakeNodeStore) UpdateNodeStatus(_ context.Context, id, status string) error {
+	for i, n := range f.nodes {
+		if n.ID == id {
+			f.nodes[i].Status = status
+			return nil
+		}
+	}
+	return errNotFound
+}
+
+func (f *fakeNodeStore) GetSystemSettings(_ context.Context) (store.SystemSettings, error) {
+	return store.SystemSettings{NodeDefaultRole: "remote"}, nil
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 func TestNodeHandlerList(t *testing.T) {

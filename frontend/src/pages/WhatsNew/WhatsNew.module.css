@@ -1,0 +1,172 @@
+.page {
+  position: relative;
+  overflow: hidden;
+  background: var(--ink);
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+.hero {
+  position: relative;
+  z-index: 1;
+  padding: clamp(3rem, 8vw, 6rem) clamp(1.5rem, 5vw, 4rem) clamp(2rem, 6vw, 3rem);
+  max-width: 800px;
+}
+
+.title {
+  font-size: clamp(2rem, 4.4vw, 3rem);
+  margin-bottom: 1.5rem;
+}
+
+.prose {
+  font-size: 1.02rem;
+  line-height: 1.7;
+  color: var(--paper-faint);
+  max-width: 62ch;
+}
+
+.highlights {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.5rem;
+  padding: 0 clamp(1.5rem, 5vw, 4rem) clamp(3rem, 7vw, 5rem);
+  max-width: 1280px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.card {
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 2rem 1.75rem;
+}
+
+.cardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--blueprint) 18%, transparent);
+  color: var(--blueprint-bright);
+  margin-bottom: 1.25rem;
+}
+
+.cardTitle {
+  font-size: 1.15rem;
+  margin-bottom: 0.6rem;
+}
+
+.cardBody {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--paper-faint);
+}
+
+/* ── Changelog ──────────────────────────────────────────────────── */
+
+.changelog {
+  position: relative;
+  z-index: 1;
+  padding: clamp(2rem, 6vw, 3rem) clamp(1.5rem, 5vw, 4rem);
+  max-width: 1000px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  border-top: 1px solid var(--ink-line);
+}
+
+.sectionTitle {
+  font-size: clamp(1.3rem, 2.6vw, 1.7rem);
+  margin-bottom: 1.5rem;
+}
+
+.changelogList {
+  margin: 0;
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--ink-raised);
+}
+
+.changelogRow {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) 1fr;
+  gap: 1.25rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--ink-line);
+}
+.changelogRow:last-child {
+  border-bottom: none;
+}
+.changelogRow dt {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--blueprint-bright);
+}
+.changelogRow dd {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--paper-faint);
+}
+
+@media (max-width: 640px) {
+  .changelogRow {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+  }
+}
+
+.reassurance {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding: clamp(2rem, 6vw, 3rem) clamp(1.5rem, 5vw, 4rem) clamp(4rem, 8vw, 6rem);
+  max-width: 800px;
+}
+
+.calloutWrap {
+  width: 100%;
+}
+
+.footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 1.75rem clamp(1.5rem, 5vw, 4rem);
+  border-top: 1px solid var(--ink-line);
+  background: var(--ink-raised);
+  margin-top: auto;
+}
+
+.footerLinks {
+  display: flex;
+  gap: 1.5rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--paper-faint);
+}
+.footerLinks a {
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.footerLinks a:hover {
+  color: var(--paper);
+}

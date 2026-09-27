@@ -47,10 +47,11 @@ cmd/api/dist/*
 !cmd/api/dist/index.html
 
 # ── Frontend ─────────────────────────────────────────────────
+# frontend/ (Vite/React) also carries its own local .gitignore for
+# node_modules/dist — these are kept here too for visibility from the repo
+# root.
 frontend/node_modules/
-frontend/.nuxt/
-frontend/.output/
-frontend/.cache/
+frontend/dist/
 
 # ── Logs ─────────────────────────────────────────────────────
 *.log

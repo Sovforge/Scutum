@@ -3,14 +3,14 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm run generate
+RUN npm run build
 
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=frontend /app/frontend/.output/public/ ./cmd/api/dist/
+COPY --from=frontend /app/frontend/dist/ ./cmd/api/dist/
 RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w" \
     -o scutum ./cmd/api
