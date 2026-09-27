@@ -446,8 +446,8 @@ Scutum supports deploying declarative stacks using a **GitOps workflow**. Simply
 # 1. Build the frontend and embed it into the binary
 cd frontend
 npm install
-npm run generate
-cp -r .output/public/. ../cmd/api/dist/
+npm run build
+cp -r dist/. ../cmd/api/dist/
 cd ..
 
 # 2. Build the Go binary (CGO_ENABLED=0 produces a fully static binary)

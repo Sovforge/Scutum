@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -253,6 +256,55 @@ func (h *KubernetesHandler) HandleListAllPods(w http.ResponseWriter, r *http.Req
 	w.Write(result)
 }
 
+// HandleListDeployments returns every Deployment across all namespaces —
+// just enough (namespace, name, desired/ready replica counts) for the
+// Deployments tab to list, scale, and restart. models.Deployment has no
+// Status field (it's only ever used as an outgoing apply/scale payload), so
+// this decodes into a local struct instead, same as HandleK8sSummary does.
+func (h *KubernetesHandler) HandleListDeployments(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	var deplList struct {
+		Items []struct {
+			Metadata struct {
+				Name      string `json:"name"`
+				Namespace string `json:"namespace"`
+			} `json:"metadata"`
+			Spec struct {
+				Replicas int `json:"replicas"`
+			} `json:"spec"`
+			Status struct {
+				Replicas      int `json:"replicas"`
+				ReadyReplicas int `json:"readyReplicas"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := h.client.Do("GET", "/apis/apps/v1/deployments", nil, &deplList); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type deploymentInfo struct {
+		Namespace     string `json:"namespace"`
+		Name          string `json:"name"`
+		Replicas      int    `json:"replicas"`
+		ReadyReplicas int    `json:"ready_replicas"`
+	}
+	out := make([]deploymentInfo, 0, len(deplList.Items))
+	for _, d := range deplList.Items {
+		out = append(out, deploymentInfo{
+			Namespace:     d.Metadata.Namespace,
+			Name:          d.Metadata.Name,
+			Replicas:      d.Spec.Replicas,
+			ReadyReplicas: d.Status.ReadyReplicas,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
 // HandleK8sSummary returns aggregated cluster stats for the metrics tab.
 func (h *KubernetesHandler) HandleK8sSummary(w http.ResponseWriter, r *http.Request) {
 	if proxyRequest(w, r, nil, h.nodeStore) {
@@ -383,6 +435,217 @@ func (h *KubernetesHandler) HandleRestart(w http.ResponseWriter, r *http.Request
 	name := r.PathValue("name")
 
 	if err := h.RestartDeployment(r.Context(), ns, name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// ── Secrets ────────────────────────────────────────────────────────────────
+// The Settings → Secrets tab manages real Kubernetes Secret objects, not
+// app-level credentials — same cluster, same client as Pods/Deployments
+// above. Values are never returned to the browser: list/get expose only
+// key NAMES, matching the honest "no value is shown here" behavior the
+// mock already disclosed.
+
+type secretInfo struct {
+	Namespace string   `json:"namespace"`
+	Name      string   `json:"name"`
+	Type      string   `json:"type"`
+	CreatedAt string   `json:"created_at"`
+	Keys      []string `json:"keys"`
+}
+
+// HandleListSecrets returns every Secret across all namespaces.
+func (h *KubernetesHandler) HandleListSecrets(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	var secretList struct {
+		Items []struct {
+			Metadata struct {
+				Name              string `json:"name"`
+				Namespace         string `json:"namespace"`
+				CreationTimestamp string `json:"creationTimestamp"`
+			} `json:"metadata"`
+			Type string            `json:"type"`
+			Data map[string]string `json:"data"`
+		} `json:"items"`
+	}
+	if err := h.client.Do("GET", "/api/v1/secrets", nil, &secretList); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	out := make([]secretInfo, 0, len(secretList.Items))
+	for _, s := range secretList.Items {
+		// Kubernetes auto-creates a service-account token Secret per
+		// namespace/service-account; those aren't user secrets and would
+		// just clutter the list.
+		if s.Type == "kubernetes.io/service-account-token" {
+			continue
+		}
+		keys := make([]string, 0, len(s.Data))
+		for k := range s.Data {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out = append(out, secretInfo{
+			Namespace: s.Metadata.Namespace,
+			Name:      s.Metadata.Name,
+			Type:      s.Type,
+			CreatedAt: s.Metadata.CreationTimestamp,
+			Keys:      keys,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// HandleGetSecret returns one Secret's metadata and key names — never values.
+func (h *KubernetesHandler) HandleGetSecret(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	ns := r.PathValue("ns")
+	name := r.PathValue("name")
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", ns, name)
+
+	var secret struct {
+		Metadata struct {
+			CreationTimestamp string `json:"creationTimestamp"`
+		} `json:"metadata"`
+		Type string            `json:"type"`
+		Data map[string]string `json:"data"`
+	}
+	if err := h.client.Do("GET", path, nil, &secret); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	keys := make([]string, 0, len(secret.Data))
+	for k := range secret.Data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(secretInfo{
+		Namespace: ns,
+		Name:      name,
+		Type:      secret.Type,
+		CreatedAt: secret.Metadata.CreationTimestamp,
+		Keys:      keys,
+	})
+}
+
+type createSecretRequest struct {
+	Name string            `json:"name"`
+	Type string            `json:"type"`
+	Data map[string]string `json:"data"`
+}
+
+// HandleCreateSecret creates a Secret from plaintext data — the API server
+// base64-encodes stringData into data itself, so no encoding happens here.
+func (h *KubernetesHandler) HandleCreateSecret(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	ns := r.PathValue("ns")
+
+	var req createSecretRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Data) == 0 {
+		http.Error(w, "at least one data key is required", http.StatusBadRequest)
+		return
+	}
+	secretType := req.Type
+	if secretType == "" {
+		secretType = "Opaque"
+	}
+
+	secret := models.Secret{
+		KubernetesResurce: models.KubernetesResurce{
+			APIVersion: "v1",
+			Kind:       "Secret",
+			Metadata:   models.Meta{Name: req.Name, Namespace: ns},
+		},
+		Type:       secretType,
+		StringData: req.Data,
+	}
+
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets", ns)
+	if err := h.client.Do("POST", path, secret, nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+}
+
+// HandleDeleteSecret deletes a Secret.
+func (h *KubernetesHandler) HandleDeleteSecret(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	ns := r.PathValue("ns")
+	name := r.PathValue("name")
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", ns, name)
+	if err := h.client.Do("DELETE", path, nil, nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// HandleRotateSecret replaces every existing data key's value with a fresh
+// random one — same "invalidate and reissue fresh random material"
+// semantics as recovery-code and ERK-share regeneration elsewhere in this
+// app. Only meaningful for Opaque secrets: a TLS or Docker-registry secret's
+// keys hold structured data (a cert, a dockerconfigjson blob), not
+// independent tokens, so randomizing them would just corrupt the secret —
+// those should be recreated with new material instead.
+func (h *KubernetesHandler) HandleRotateSecret(w http.ResponseWriter, r *http.Request) {
+	if proxyRequest(w, r, nil, h.nodeStore) {
+		return
+	}
+	ns := r.PathValue("ns")
+	name := r.PathValue("name")
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", ns, name)
+
+	var existing models.Secret
+	if err := h.client.Do("GET", path, nil, &existing); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if existing.Type != "" && existing.Type != "Opaque" {
+		http.Error(w, "rotation is only supported for Opaque secrets — recreate TLS or Docker-registry secrets with new material instead", http.StatusBadRequest)
+		return
+	}
+	if len(existing.Data) == 0 {
+		http.Error(w, "secret has no data keys to rotate", http.StatusBadRequest)
+		return
+	}
+
+	fresh := make(map[string]string, len(existing.Data))
+	for k := range existing.Data {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			http.Error(w, "failed to generate new value", http.StatusInternalServerError)
+			return
+		}
+		fresh[k] = base64.RawURLEncoding.EncodeToString(buf)
+	}
+	existing.Data = nil
+	existing.StringData = fresh
+
+	if err := h.client.Do("PUT", path, existing, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -45,6 +45,7 @@ func (d PostgresDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`,
+		`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved'`,
 		// alert tables
 		`CREATE TABLE IF NOT EXISTS alert_rules (
 			id             TEXT PRIMARY KEY,
@@ -103,6 +104,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 	type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 	address     TEXT NOT NULL,
 	public_key  TEXT NOT NULL,
+	status      TEXT NOT NULL DEFAULT 'approved',
 	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -198,6 +200,19 @@ CREATE TABLE IF NOT EXISTS secrets (
 CREATE TABLE IF NOT EXISTS setup_state (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS system_settings (
+	id                       INTEGER PRIMARY KEY CHECK(id = 1),
+	cluster_name             TEXT NOT NULL DEFAULT '',
+	region                   TEXT NOT NULL DEFAULT '',
+	log_level                TEXT NOT NULL DEFAULT 'info',
+	mesh_mtu                 INTEGER NOT NULL DEFAULT 1420,
+	mesh_keepalive_s         INTEGER NOT NULL DEFAULT 25,
+	node_default_role        TEXT NOT NULL DEFAULT 'remote',
+	node_require_approval    INTEGER NOT NULL DEFAULT 0,
+	auth_require_mfa         INTEGER NOT NULL DEFAULT 0,
+	auth_session_timeout_min INTEGER NOT NULL DEFAULT 1440
 );
 
 CREATE TABLE IF NOT EXISTS storage_backends (

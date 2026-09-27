@@ -49,6 +49,10 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN email TEXT`,
+		// 'approved' preserves existing behavior for nodes created before
+		// approval workflows existed, and for any node created while
+		// node_require_approval is off.
+		`ALTER TABLE nodes ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'`,
 	} {
 		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
 	}
@@ -135,6 +139,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 			type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 			address     TEXT NOT NULL,
 			public_key  TEXT NOT NULL,
+			status      TEXT NOT NULL DEFAULT 'approved',
 			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -230,6 +235,19 @@ CREATE TABLE IF NOT EXISTS nodes (
 		CREATE TABLE IF NOT EXISTS setup_state (
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS system_settings (
+			id                       INTEGER PRIMARY KEY CHECK(id = 1),
+			cluster_name             TEXT NOT NULL DEFAULT '',
+			region                   TEXT NOT NULL DEFAULT '',
+			log_level                TEXT NOT NULL DEFAULT 'info',
+			mesh_mtu                 INTEGER NOT NULL DEFAULT 1420,
+			mesh_keepalive_s         INTEGER NOT NULL DEFAULT 25,
+			node_default_role        TEXT NOT NULL DEFAULT 'remote',
+			node_require_approval    INTEGER NOT NULL DEFAULT 0,
+			auth_require_mfa         INTEGER NOT NULL DEFAULT 0,
+			auth_session_timeout_min INTEGER NOT NULL DEFAULT 1440
 		);
 
 		CREATE TABLE IF NOT EXISTS storage_backends (

@@ -47,6 +47,7 @@ func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN disabled TINYINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN email VARCHAR(255)`,
+		`ALTER TABLE nodes ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'approved'`,
 		// alert tables
 		`CREATE TABLE IF NOT EXISTS alert_rules (
 			id             VARCHAR(255) PRIMARY KEY,
@@ -106,6 +107,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     type        ENUM('hub', 'remote') NOT NULL,
     address     VARCHAR(255) NOT NULL,
     public_key  TEXT NOT NULL,
+    status      VARCHAR(20) NOT NULL DEFAULT 'approved',
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -208,6 +210,19 @@ CREATE TABLE IF NOT EXISTS secrets (
 CREATE TABLE IF NOT EXISTS setup_state (
     ` + "`key`" + `  VARCHAR(255) PRIMARY KEY,
     value VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS system_settings (
+    id                       INT PRIMARY KEY CHECK (id = 1),
+    cluster_name             VARCHAR(255) NOT NULL DEFAULT '',
+    region                   VARCHAR(100) NOT NULL DEFAULT '',
+    log_level                VARCHAR(20) NOT NULL DEFAULT 'info',
+    mesh_mtu                 INT NOT NULL DEFAULT 1420,
+    mesh_keepalive_s         INT NOT NULL DEFAULT 25,
+    node_default_role        VARCHAR(20) NOT NULL DEFAULT 'remote',
+    node_require_approval    TINYINT(1) NOT NULL DEFAULT 0,
+    auth_require_mfa         TINYINT(1) NOT NULL DEFAULT 0,
+    auth_session_timeout_min INT NOT NULL DEFAULT 1440
 );
 
 CREATE TABLE IF NOT EXISTS storage_backends (

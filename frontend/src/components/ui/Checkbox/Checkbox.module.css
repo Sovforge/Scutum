@@ -1,0 +1,16 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--paper-faint);
+  cursor: pointer;
+  margin-bottom: 1.5rem;
+  user-select: none;
+}
+.row input {
+  accent-color: var(--rust);
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}

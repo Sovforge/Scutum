@@ -1,0 +1,10 @@
+.hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+  color: var(--paper-dim);
+  line-height: 1.5;
+}
+.hint code {
+  font-family: var(--mono);
+  color: var(--blueprint-bright);
+}

@@ -1,0 +1,46 @@
+.shell {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ink);
+  background-image: radial-gradient(ellipse 60% 50% at 50% 0%, rgba(79, 163, 163, 0.1), transparent);
+}
+
+.nav {
+  padding: 1.6rem clamp(1.5rem, 5vw, 4rem);
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem clamp(1.25rem, 5vw, 4rem) 4rem;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid var(--ink-line-strong);
+  background: var(--ink-raised);
+  border-radius: var(--radius-lg);
+  padding: 2.25rem 2.25rem 2rem;
+  box-shadow: var(--shadow-lg), 0 30px 70px -30px color-mix(in srgb, var(--rust) 30%, transparent);
+}
+
+.cardWide {
+  max-width: 600px;
+}
+
+.title {
+  font-size: 1.8rem;
+  margin-bottom: 0.6rem;
+}
+
+.subtitle {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--paper-faint);
+  margin-bottom: 1.75rem;
+}

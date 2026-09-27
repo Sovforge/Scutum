@@ -12,6 +12,7 @@ import (
 
 	"scutum/cmd/internal/auth"
 	"scutum/cmd/internal/handlers"
+	"scutum/cmd/internal/store"
 )
 
 type fakeUserAuthStore struct {
@@ -79,6 +80,10 @@ func (f *fakeUserAuthStore) CountRemainingRecoveryCodes(ctx context.Context, use
 
 func (f *fakeUserAuthStore) UpdateUserPassword(ctx context.Context, id, passwordHash string) error {
 	return nil
+}
+
+func (f *fakeUserAuthStore) GetSystemSettings(ctx context.Context) (store.SystemSettings, error) {
+	return store.SystemSettings{AuthSessionTimeoutMin: 1440}, nil
 }
 
 func TestAuthHandlerRegisterValidation(t *testing.T) {

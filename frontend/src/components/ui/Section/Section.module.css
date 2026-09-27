@@ -1,0 +1,58 @@
+.section {
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  padding: 0.9rem 1.15rem;
+  border-bottom: 1px solid var(--ink-line);
+}
+
+.title {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.schematic {
+  position: relative;
+}
+.corner {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  opacity: 0.7;
+  z-index: 1;
+}
+.cornerTL {
+  top: 8px;
+  left: 8px;
+  border-top: 2px solid var(--blueprint);
+  border-left: 2px solid var(--blueprint);
+}
+.cornerTR {
+  top: 8px;
+  right: 8px;
+  border-top: 2px solid var(--blueprint);
+  border-right: 2px solid var(--blueprint);
+}
+.cornerBL {
+  bottom: 8px;
+  left: 8px;
+  border-bottom: 2px solid var(--blueprint);
+  border-left: 2px solid var(--blueprint);
+}
+.cornerBR {
+  bottom: 8px;
+  right: 8px;
+  border-bottom: 2px solid var(--blueprint);
+  border-right: 2px solid var(--blueprint);
+}

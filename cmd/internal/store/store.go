@@ -312,6 +312,105 @@ func (s *Store) GetS3Config(ctx context.Context) (S3Config, error) {
 }
 
 // ---------------------------------------------------------------------------
+// System settings (Settings → General/Mesh/Nodes/Auth) — a single row,
+// same pattern as S3Config/git_config. Booleans are stored as 0/1 for
+// portability across SQLite/MySQL/PostgreSQL.
+// ---------------------------------------------------------------------------
+
+type SystemSettings struct {
+	ClusterName           string
+	Region                string
+	LogLevel              string
+	MeshMTU               int
+	MeshKeepaliveSeconds  int
+	NodeDefaultRole       string
+	NodeRequireApproval   bool
+	AuthRequireMFA        bool
+	AuthSessionTimeoutMin int
+}
+
+// defaultSystemSettings mirrors the column defaults, returned when no row
+// has been written yet (fresh installs before the first Settings save).
+func defaultSystemSettings() SystemSettings {
+	return SystemSettings{
+		LogLevel:              "info",
+		MeshMTU:               1420,
+		MeshKeepaliveSeconds:  25,
+		NodeDefaultRole:       "remote",
+		AuthSessionTimeoutMin: 1440,
+	}
+}
+
+func (s *Store) GetSystemSettings(ctx context.Context) (SystemSettings, error) {
+	var cfg SystemSettings
+	var requireApproval, requireMFA int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT cluster_name, region, log_level, mesh_mtu, mesh_keepalive_s,
+		       node_default_role, node_require_approval, auth_require_mfa, auth_session_timeout_min
+		FROM system_settings WHERE id = 1
+	`).Scan(
+		&cfg.ClusterName, &cfg.Region, &cfg.LogLevel, &cfg.MeshMTU, &cfg.MeshKeepaliveSeconds,
+		&cfg.NodeDefaultRole, &requireApproval, &requireMFA, &cfg.AuthSessionTimeoutMin,
+	)
+	if err == sql.ErrNoRows {
+		return defaultSystemSettings(), nil
+	}
+	if err != nil {
+		return SystemSettings{}, fmt.Errorf("query system_settings: %w", err)
+	}
+	cfg.NodeRequireApproval = requireApproval != 0
+	cfg.AuthRequireMFA = requireMFA != 0
+	return cfg, nil
+}
+
+func (s *Store) UpdateSystemSettings(ctx context.Context, cfg SystemSettings) error {
+	boolInt := func(b bool) int {
+		if b {
+			return 1
+		}
+		return 0
+	}
+	args := []interface{}{
+		cfg.ClusterName, cfg.Region, cfg.LogLevel, cfg.MeshMTU, cfg.MeshKeepaliveSeconds,
+		cfg.NodeDefaultRole, boolInt(cfg.NodeRequireApproval), boolInt(cfg.AuthRequireMFA), cfg.AuthSessionTimeoutMin,
+	}
+
+	var q string
+	switch s.driver.(type) {
+	case *MySQLDriver:
+		q = fmt.Sprintf(`
+			INSERT INTO system_settings (
+				id, cluster_name, region, log_level, mesh_mtu, mesh_keepalive_s,
+				node_default_role, node_require_approval, auth_require_mfa, auth_session_timeout_min
+			) VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+			ON DUPLICATE KEY UPDATE
+				cluster_name = VALUES(cluster_name), region = VALUES(region), log_level = VALUES(log_level),
+				mesh_mtu = VALUES(mesh_mtu), mesh_keepalive_s = VALUES(mesh_keepalive_s),
+				node_default_role = VALUES(node_default_role), node_require_approval = VALUES(node_require_approval),
+				auth_require_mfa = VALUES(auth_require_mfa), auth_session_timeout_min = VALUES(auth_session_timeout_min)
+		`, s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9))
+	default: // SQLite and PostgreSQL
+		q = fmt.Sprintf(`
+			INSERT INTO system_settings (
+				id, cluster_name, region, log_level, mesh_mtu, mesh_keepalive_s,
+				node_default_role, node_require_approval, auth_require_mfa, auth_session_timeout_min
+			) VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+			ON CONFLICT(id) DO UPDATE SET
+				cluster_name = excluded.cluster_name, region = excluded.region, log_level = excluded.log_level,
+				mesh_mtu = excluded.mesh_mtu, mesh_keepalive_s = excluded.mesh_keepalive_s,
+				node_default_role = excluded.node_default_role, node_require_approval = excluded.node_require_approval,
+				auth_require_mfa = excluded.auth_require_mfa, auth_session_timeout_min = excluded.auth_session_timeout_min
+		`, s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9))
+	}
+
+	_, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("upsert system_settings: %w", err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // WireGuard keys (stored via KMS secrets)
 // ---------------------------------------------------------------------------
 
@@ -423,11 +522,16 @@ type NodeRecord struct {
 	Type      string `json:"type"`
 	Address   string `json:"address"`
 	PublicKey string `json:"public_key"`
+	// Status is "approved" or "pending" — see node_require_approval in
+	// system_settings. Nodes created while approval isn't required default
+	// straight to "approved", so this column changes nothing for installs
+	// that never turn the setting on.
+	Status string `json:"status"`
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]NodeRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, type, address, public_key FROM nodes`)
+		SELECT id, name, type, address, public_key, status FROM nodes`)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +540,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]NodeRecord, error) {
 	var nodes []NodeRecord
 	for rows.Next() {
 		var n NodeRecord
-		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &n.Address, &n.PublicKey); err != nil {
+		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &n.Address, &n.PublicKey, &n.Status); err != nil {
 			return nil, err
 		}
 		nodes = append(nodes, n)

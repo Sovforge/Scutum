@@ -1,0 +1,152 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Report header ──────────────────────────────────────────────── */
+
+.reportHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reportTitle {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+/* ── Add backend form ───────────────────────────────────────────── */
+
+.addForm {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  margin: 1rem 1.15rem;
+  padding: 1.1rem 1.15rem 1.25rem;
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--ink);
+}
+
+.addFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem 1.25rem;
+}
+.addFields > :global(.field) {
+  margin-bottom: 0;
+}
+
+.addToggles {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.addToggles > :global(label) {
+  margin-bottom: 0;
+}
+
+.formError {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+
+.addActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Backends table extras ──────────────────────────────────────── */
+
+.expandBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: inherit;
+}
+.expandBtn svg {
+  color: var(--paper-dim);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.chevronCollapsed {
+  transform: rotate(-90deg);
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.rowActions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--paper-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.rowActions button:hover {
+  color: var(--paper);
+  background: color-mix(in srgb, var(--paper) 8%, transparent);
+}
+.rowActions button.rowActionDanger:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+
+/* ── Nested bucket table ────────────────────────────────────────── */
+
+td.bucketCell {
+  background: var(--ink);
+  padding: 0.85rem 1.15rem;
+}
+
+.bucketEmpty {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--paper-dim);
+}
+
+.bucketTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+.bucketTable th {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  color: var(--paper-dim);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  border-bottom: 1px solid var(--ink-line);
+}
+.bucketTable td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--ink-line);
+  vertical-align: middle;
+}
+.bucketTable tr:last-child td {
+  border-bottom: none;
+}
+
+.loadingRow {
+  padding: 1rem 1.15rem;
+  font-size: 0.82rem;
+  color: var(--paper-dim);
+}

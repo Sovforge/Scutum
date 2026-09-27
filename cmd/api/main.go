@@ -377,6 +377,7 @@ func main() {
 	// --- Handlers ---
 	dockerCtrl := handlers.NewDockerHandler(db)
 	kubernetesCtrl := handlers.NewKubernetesHandler(db)
+	settingsCtrl := handlers.NewSettingsHandler(db)
 	gitCtrl := handlers.NewGitHandler()
 	s3Ctrl := handlers.NewS3Handler()
 	storageCtrl := handlers.NewStorageHandler(db)
@@ -424,11 +425,11 @@ func main() {
 	// Auth (public)
 	apiMux.Handle("POST /auth/register", rateLimitMW(http.HandlerFunc(authCtrl.HandleRegister)))
 	apiMux.Handle("POST /auth/login", rateLimitMW(http.HandlerFunc(authCtrl.HandleLogin)))
-	apiMux.Handle("POST /auth/keys", rateLimitMW(http.HandlerFunc(authCtrl.HandleCreateAPIKey)))
 	apiMux.Handle("POST /auth/forgot-password", rateLimitMW(http.HandlerFunc(authCtrl.HandleForgotPassword)))
 
 	// Auth (authenticated)
 	apiMux.Handle("GET /auth/me", authMW(http.HandlerFunc(userCtrl.HandleMe)))
+	apiMux.Handle("POST /auth/keys", authMW(rateLimitMW(http.HandlerFunc(authCtrl.HandleCreateAPIKey))))
 	apiMux.Handle("GET /auth/tokens", authMW(http.HandlerFunc(userCtrl.HandleListTokens)))
 	apiMux.Handle("DELETE /auth/tokens/{id}", authMW(http.HandlerFunc(userCtrl.HandleDeleteToken)))
 
@@ -463,6 +464,12 @@ func main() {
 	apiMux.Handle("GET /nodes/{id}", require("nodes", "read", nodeCtrl.HandleGet))
 	apiMux.Handle("POST /nodes", require("nodes", "write", nodeCtrl.HandleCreate))
 	apiMux.Handle("DELETE /nodes/{id}", require("nodes", "admin", nodeCtrl.HandleDelete))
+	apiMux.Handle("POST /nodes/{id}/approve", require("nodes", "admin", nodeCtrl.HandleApprove))
+	apiMux.Handle("POST /nodes/{id}/reject", require("nodes", "admin", nodeCtrl.HandleReject))
+
+	// System settings (Settings → General/Mesh/Nodes/Auth)
+	apiMux.Handle("GET /settings", require("admin", "admin", settingsCtrl.HandleGet))
+	apiMux.Handle("PUT /settings", require("admin", "admin", settingsCtrl.HandleUpdate))
 
 	// Users (admin)
 	apiMux.Handle("GET /users", require("admin", "admin", userCtrl.HandleList))
@@ -486,7 +493,7 @@ func main() {
 	apiMux.Handle("POST /docker/containers/{id}/start", requireDocker("docker", "write", dockerCtrl.HandleStart))
 	apiMux.Handle("POST /docker/containers/{id}/stop", requireDocker("docker", "write", dockerCtrl.HandleStop))
 	apiMux.Handle("POST /docker/containers/{id}/restart", requireDocker("docker", "write", dockerCtrl.HandleRestart))
-	apiMux.Handle("DELETE /docker/containers/{id}", requireDocker("docker", "delete", dockerCtrl.HandleDelete))
+	apiMux.Handle("DELETE /docker/containers/{id}", requireDocker("docker", "admin", dockerCtrl.HandleDelete))
 	apiMux.Handle("GET /docker/containers/{id}/stats", requireDocker("docker", "read", dockerCtrl.HandleStats))
 	apiMux.Handle("GET /docker/containers/{id}/stats-snapshot", requireDocker("docker", "read", dockerCtrl.HandleStatsSnapshot))
 	apiMux.Handle("GET /docker/containers/{id}/logs", requireDocker("docker", "read", dockerCtrl.HandleLogs))
@@ -495,14 +502,20 @@ func main() {
 	// Kubernetes
 	apiMux.Handle("GET /kubernetes/summary", require("kubernetes", "read", kubernetesCtrl.HandleK8sSummary))
 	apiMux.Handle("GET /kubernetes/pods", require("kubernetes", "read", kubernetesCtrl.HandleListAllPods))
+	apiMux.Handle("GET /kubernetes/deployments", require("kubernetes", "read", kubernetesCtrl.HandleListDeployments))
 	apiMux.Handle("GET /kubernetes/events", require("kubernetes", "read", kubernetesCtrl.HandleWatchEvents))
 	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}", require("kubernetes", "read", kubernetesCtrl.HandleGetPod))
 	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}/logs-json", require("kubernetes", "read", kubernetesCtrl.HandlePodLogsJSON))
-	apiMux.Handle("DELETE /kubernetes/{ns}/pods/{name}", require("kubernetes", "delete", kubernetesCtrl.HandleDeletePod))
+	apiMux.Handle("DELETE /kubernetes/{ns}/pods/{name}", require("kubernetes", "admin", kubernetesCtrl.HandleDeletePod))
 	apiMux.Handle("POST /kubernetes/apply", require("kubernetes", "write", kubernetesCtrl.HandleApplyYAML))
 	apiMux.Handle("POST /kubernetes/{ns}/deploy", require("kubernetes", "write", kubernetesCtrl.HandleDeploy))
 	apiMux.Handle("POST /kubernetes/{ns}/deployments/{name}/scale", require("kubernetes", "write", kubernetesCtrl.HandleScale))
 	apiMux.Handle("POST /kubernetes/{ns}/deployments/{name}/restart", require("kubernetes", "write", kubernetesCtrl.HandleRestart))
+	apiMux.Handle("GET /kubernetes/secrets", require("kubernetes", "read", kubernetesCtrl.HandleListSecrets))
+	apiMux.Handle("GET /kubernetes/{ns}/secrets/{name}", require("kubernetes", "read", kubernetesCtrl.HandleGetSecret))
+	apiMux.Handle("POST /kubernetes/{ns}/secrets", require("kubernetes", "write", kubernetesCtrl.HandleCreateSecret))
+	apiMux.Handle("DELETE /kubernetes/{ns}/secrets/{name}", require("kubernetes", "admin", kubernetesCtrl.HandleDeleteSecret))
+	apiMux.Handle("POST /kubernetes/{ns}/secrets/{name}/rotate", require("kubernetes", "write", kubernetesCtrl.HandleRotateSecret))
 	apiMux.Handle("GET /k8s/{namespace}/{pod}/terminal", require("kubernetes", "write", kubernetesCtrl.HandleTerminal))
 
 	// Git
@@ -703,14 +716,14 @@ func main() {
 	scimMux.Handle("DELETE /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleDeleteUser)))
 	mainMux.Handle("/scim/v2/", http.StripPrefix("/scim/v2", scimMux))
 
-	// Nuxt generates hashed filenames under /_nuxt/ so they can be cached forever.
+	// Vite generates hashed filenames under /assets/ so they can be cached forever.
 	sub, _ := fs.Sub(frontendFS, "dist")
-	nuxtFileServer := http.FileServer(http.FS(sub))
+	frontendFileServer := http.FileServer(http.FS(sub))
 	staticHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/_nuxt/") {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
-		nuxtFileServer.ServeHTTP(w, r)
+		frontendFileServer.ServeHTTP(w, r)
 	})
 
 	mainMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -718,7 +731,7 @@ func main() {
 
 		// For paths without a trailing slash, check if a directory index exists
 		// and serve it directly — avoids the file server's 301 redirect which
-		// causes an infinite loop with Nuxt's client-side router normalisation.
+		// causes an infinite loop with the client-side router's normalisation.
 		if !strings.HasSuffix(urlPath, "/") {
 			if data, err := frontendFS.ReadFile("dist" + urlPath + "/index.html"); err == nil {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -733,7 +746,9 @@ func main() {
 			return
 		}
 
-		// Unknown paths fall back to index.html so client-side routing works.
+		// Unknown paths fall back to index.html — this is a client-side-routed
+		// SPA (React Router), not prerendered pages, so every real route
+		// (and any dead link) is served the same shell and resolved in JS.
 		index, err := frontendFS.ReadFile("dist/index.html")
 		if err != nil {
 			http.Error(w, "Not Found", http.StatusNotFound)
@@ -1113,12 +1128,16 @@ func restoreWGPeers(ctx context.Context, db *store.Store, logger *utils.Logger) 
 	for _, n := range nodes {
 		keyByNodeID[n.ID] = n.PublicKey
 	}
+	keepalive := 25
+	if settings, err := db.GetSystemSettings(ctx); err == nil && settings.MeshKeepaliveSeconds > 0 {
+		keepalive = settings.MeshKeepaliveSeconds
+	}
 	for _, p := range peers {
 		pubKey, ok := keyByNodeID[p.NodeID]
 		if !ok || pubKey == "" {
 			continue
 		}
-		if err := utils.AddPeer("wg0", pubKey, p.Endpoint, p.AllowedIPs, 25); err != nil {
+		if err := utils.AddPeer("wg0", pubKey, p.Endpoint, p.AllowedIPs, keepalive); err != nil {
 			logger.Warn("restoreWGPeers: failed to re-add peer", "node_id", p.NodeID, "error", err)
 		} else {
 			logger.Info("restoreWGPeers: re-added peer", "node_id", p.NodeID)

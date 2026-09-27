@@ -134,6 +134,16 @@ func SetupInterface(cfg InterfaceConfig) (*SetupResult, error) {
 	}, nil
 }
 
+// SetInterfaceMTU applies an MTU change to an already-up WireGuard interface
+// live — unlike the listen port or address, MTU can be changed without
+// tearing down the tunnel, so Settings → Mesh can apply it immediately
+// instead of just persisting it for the next restart.
+func SetInterfaceMTU(ifaceName string, mtu int) error {
+	runner := DefaultCommandRunner
+	_, err := runner.Output("ip", "link", "set", "dev", ifaceName, "mtu", fmt.Sprint(mtu))
+	return err
+}
+
 func UpdatePeerEndpoint(ifaceName, publicKey, endpoint string) error {
 	runner := DefaultCommandRunner
 	out, err := runner.CombinedOutput("wg", "set", ifaceName, "peer", publicKey, "endpoint", endpoint)
