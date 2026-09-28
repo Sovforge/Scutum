@@ -55,7 +55,23 @@
   justify-content: flex-end;
 }
 
+.loadingRow {
+  padding: 1rem 1.15rem;
+  font-size: 0.82rem;
+  color: var(--paper-dim);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  color: var(--paper);
+}
+
 /* ── Table row actions ──────────────────────────────────────────── */
+
+.clickableRow {
+  cursor: pointer;
+}
 
 .rowActions {
   display: flex;

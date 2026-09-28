@@ -399,21 +399,34 @@ func (h *KubernetesHandler) HandleApplyYAML(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	out, err := h.applyYAMLLocally(r.Context(), body)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": out})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"output": out})
+}
+
+// applyYAMLLocally pipes body to `kubectl apply -f -` on this node. Pure
+// exec logic, no HTTP concerns — shared by HandleApplyYAML (after its
+// proxy/secret-resolution checks) and the GitOps reconciler, which applies
+// manifests in-process without an HTTP round trip. On failure the returned
+// string is the command's combined output.
+func (h *KubernetesHandler) applyYAMLLocally(ctx context.Context, body []byte) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
 	cmd.Stdin = bytes.NewReader(body)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": string(out)})
-		return
+		return string(out), fmt.Errorf("kubectl apply failed")
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"output": string(out)})
+	return string(out), nil
 }
 
 // HandleScale handles POST /k8s/{ns}/deployments/{name}/scale?replicas=3
