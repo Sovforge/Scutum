@@ -57,6 +57,10 @@ var defaultPermissions = []struct {
 	{"perm_admin_read", "admin:read", "admin", "read"},
 	{"perm_admin_write", "admin:write", "admin", "write"},
 	{"perm_admin_admin", "admin:admin", "admin", "admin"},
+	// Secrets (KMS-backed named secrets vault)
+	{"perm_secrets_read", "secrets:read", "secrets", "read"},
+	{"perm_secrets_write", "secrets:write", "secrets", "write"},
+	{"perm_secrets_admin", "secrets:admin", "secrets", "admin"},
 }
 
 // rolePermissions maps role ID to the permission IDs it receives.
@@ -71,6 +75,7 @@ var rolePermissions = map[string][]string{
 		"perm_plugins_read", "perm_plugins_write", "perm_plugins_admin",
 		"perm_sync_read", "perm_sync_write", "perm_sync_admin",
 		"perm_admin_read", "perm_admin_write", "perm_admin_admin",
+		"perm_secrets_read", "perm_secrets_write", "perm_secrets_admin",
 	},
 	"role_operator": {
 		"perm_nodes_read", "perm_nodes_write",
@@ -81,6 +86,7 @@ var rolePermissions = map[string][]string{
 		"perm_wg_read", "perm_wg_write",
 		"perm_plugins_read",
 		"perm_sync_read", "perm_sync_write",
+		"perm_secrets_read", "perm_secrets_write",
 	},
 	"role_viewer": {
 		"perm_nodes_read",
@@ -92,6 +98,7 @@ var rolePermissions = map[string][]string{
 		"perm_plugins_read",
 		"perm_sync_read",
 		"perm_admin_read",
+		"perm_secrets_read",
 	},
 }
 

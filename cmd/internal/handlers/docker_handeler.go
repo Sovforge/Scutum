@@ -21,12 +21,14 @@ import (
 type DockerHandler struct {
 	client    *clients.DockerClient
 	nodeStore nodeProxyStore
+	secrets   secretsValueStore
 }
 
-func NewDockerHandler(ns nodeProxyStore) *DockerHandler {
+func NewDockerHandler(ns nodeProxyStore, secrets secretsValueStore) *DockerHandler {
 	return &DockerHandler{
 		client:    utils.GetPlatformClient(),
 		nodeStore: ns,
+		secrets:   secrets,
 	}
 }
 
@@ -37,13 +39,31 @@ func (h *DockerHandler) PostDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if proxyRequest(w, r, body, h.nodeStore) {
-		return
-	}
 
 	var req models.DeployRequest
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Resolve "secret://name" env references before the body ever leaves the
+	// hub — a target node has no access to the hub's KMS, so this has to
+	// happen before proxying too, not just before the local deploy path below.
+	resolvedEnv, usedSecrets, err := ResolveSecretEnvRefs(r.Context(), h.secrets, req.Env)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.Env = resolvedEnv
+	if len(usedSecrets) > 0 {
+		if body, err = json.Marshal(req); err != nil {
+			http.Error(w, "re-encode resolved request: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		audit("SECRET_ACCESSED", r, "names", strings.Join(usedSecrets, ","), "context", "docker_deploy")
+	}
+
+	if proxyRequest(w, r, body, h.nodeStore) {
 		return
 	}
 
@@ -554,6 +574,16 @@ func (h *DockerHandler) HandleDeployCompose(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	resolvedBody, usedSecrets, err := ResolveSecretRefsText(r.Context(), h.secrets, body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	body = resolvedBody
+	if len(usedSecrets) > 0 {
+		audit("SECRET_ACCESSED", r, "names", strings.Join(usedSecrets, ","), "context", "compose_deploy")
 	}
 
 	if proxyRequest(w, r, body, h.nodeStore) {

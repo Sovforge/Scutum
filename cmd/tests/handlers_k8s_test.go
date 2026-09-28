@@ -29,7 +29,7 @@ func TestKubernetesHandler(t *testing.T) {
 	// but here we can just create a new handler and inject a client if possible.
 	// NewKubernetesHandler uses in-cluster config by default.
 	// For testing, we can use a custom constructor or a helper.
-	h := handlers.NewKubernetesHandler(nil)
+	h := handlers.NewKubernetesHandler(nil, nil)
 	setUnexportedField(h, "client", clients.NewKubernetesClient(server.Client(), server.URL, ""))
 
 	t.Run("HandleGetPod", func(t *testing.T) {

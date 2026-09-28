@@ -27,7 +27,7 @@ func TestKubernetesHandlerDeploymentCreation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := handlers.NewKubernetesHandler(&mockNodeProxyStore{})
+			handler := handlers.NewKubernetesHandler(&mockNodeProxyStore{}, nil)
 			err := handler.CreateDeployment(tt.namespace, tt.depName, tt.image)
 
 			// Handler may fail due to missing k8s cluster, but should not panic
@@ -58,7 +58,7 @@ func TestKubernetesHandlerNamespaceValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := handlers.NewKubernetesHandler(&mockNodeProxyStore{})
+			handler := handlers.NewKubernetesHandler(&mockNodeProxyStore{}, nil)
 
 			// Attempt to create a deployment in the namespace to test validation
 			err := handler.CreateDeployment(tt.namespace, "test-app", "test:latest")
@@ -184,7 +184,7 @@ func TestKubernetesImagePullPolicy(t *testing.T) {
 
 // TestKubernetesHandlerInitialization tests Kubernetes handler creation
 func TestKubernetesHandlerInitialization(t *testing.T) {
-	handler := handlers.NewKubernetesHandler(&mockNodeProxyStore{})
+	handler := handlers.NewKubernetesHandler(&mockNodeProxyStore{}, nil)
 	if handler == nil {
 		t.Error("NewKubernetesHandler() returned nil")
 	}

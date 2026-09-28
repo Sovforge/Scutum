@@ -585,6 +585,44 @@ export function rotateSecret(ns: string, name: string): Promise<void> {
   return post(`/kubernetes/${ns}/secrets/${name}/rotate`, undefined, globalNodeHeaders())
 }
 
+// ── Secrets vault (KMS-backed named secrets, distinct from the Kubernetes
+// Secret objects above) ─────────────────────────────────────────────────
+// Values are write-only from the browser's perspective: create/update send
+// a plaintext value, but no response — including list — ever returns one
+// back. Reference a vault secret from a container/pod env var or a Compose/
+// Kubernetes YAML manifest with "secret://<name>"; it's resolved to the
+// real value on the hub at deploy time, never sent to the target node as
+// a reference.
+export interface VaultSecret {
+  id: string
+  name: string
+  description: string
+  created_by: string
+  created_at: string
+  updated_by: string
+  updated_at: string
+}
+
+function vaultSecretPath(name: string): string {
+  return `/secrets/${name.split('/').map(encodeURIComponent).join('/')}`
+}
+
+export function listVaultSecrets(): Promise<VaultSecret[]> {
+  return get('/secrets')
+}
+
+export function createVaultSecret(name: string, description: string, value: string): Promise<VaultSecret> {
+  return post('/secrets', { name, description, value })
+}
+
+export function updateVaultSecret(name: string, fields: { description?: string; value?: string }): Promise<VaultSecret> {
+  return put(vaultSecretPath(name), fields)
+}
+
+export function deleteVaultSecret(name: string): Promise<void> {
+  return del(vaultSecretPath(name))
+}
+
 // ── Observability ────────────────────────────────────────────────────────
 export interface LogEntry {
   time: string

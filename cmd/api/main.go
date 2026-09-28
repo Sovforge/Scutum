@@ -375,8 +375,9 @@ func main() {
 	}
 
 	// --- Handlers ---
-	dockerCtrl := handlers.NewDockerHandler(db)
-	kubernetesCtrl := handlers.NewKubernetesHandler(db)
+	dockerCtrl := handlers.NewDockerHandler(db, db)
+	kubernetesCtrl := handlers.NewKubernetesHandler(db, db)
+	secretsVaultCtrl := handlers.NewSecretsVaultHandler(db)
 	settingsCtrl := handlers.NewSettingsHandler(db)
 	gitCtrl := handlers.NewGitHandler()
 	s3Ctrl := handlers.NewS3Handler()
@@ -533,6 +534,11 @@ func main() {
 	apiMux.Handle("DELETE /storage/backends/{id}", require("storage", "admin", storageCtrl.HandleDeleteBackend))
 	apiMux.Handle("POST /storage/backends/{id}/test", require("storage", "read", storageCtrl.HandleTestBackend))
 	apiMux.Handle("GET /storage/backends/{id}/buckets", require("storage", "read", storageCtrl.HandleListBuckets))
+
+	apiMux.Handle("GET /secrets", require("secrets", "read", secretsVaultCtrl.HandleList))
+	apiMux.Handle("POST /secrets", require("secrets", "write", secretsVaultCtrl.HandleCreate))
+	apiMux.Handle("PUT /secrets/{name...}", require("secrets", "write", secretsVaultCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /secrets/{name...}", require("secrets", "admin", secretsVaultCtrl.HandleDelete))
 
 	// WireGuard
 	apiMux.Handle("POST /network/peer", require("wireguard", "write", wgCtrl.HandleAddPeer))

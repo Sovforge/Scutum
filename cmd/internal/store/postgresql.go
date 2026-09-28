@@ -197,6 +197,16 @@ CREATE TABLE IF NOT EXISTS secrets (
 	updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS app_secrets (
+	id          TEXT PRIMARY KEY,
+	name        TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	created_by  TEXT NOT NULL DEFAULT '',
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	updated_by  TEXT NOT NULL DEFAULT '',
+	updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS setup_state (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL

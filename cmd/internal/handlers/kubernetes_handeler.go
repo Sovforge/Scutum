@@ -25,9 +25,10 @@ import (
 type KubernetesHandler struct {
 	client    *clients.KubernetesClient
 	nodeStore nodeProxyStore
+	secrets   secretsValueStore
 }
 
-func NewKubernetesHandler(ns nodeProxyStore) *KubernetesHandler {
+func NewKubernetesHandler(ns nodeProxyStore, secrets secretsValueStore) *KubernetesHandler {
 	cfg, err := utils.GetInClusterConfig()
 	if err != nil {
 		cfg = &utils.KubernetesConfig{
@@ -39,6 +40,7 @@ func NewKubernetesHandler(ns nodeProxyStore) *KubernetesHandler {
 	return &KubernetesHandler{
 		client:    clients.NewKubernetesClient(cfg.HTTPClient, cfg.Host, cfg.Token),
 		nodeStore: ns,
+		secrets:   secrets,
 	}
 }
 
@@ -381,6 +383,16 @@ func (h *KubernetesHandler) HandleApplyYAML(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	resolvedBody, usedSecrets, err := ResolveSecretRefsText(r.Context(), h.secrets, body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	body = resolvedBody
+	if len(usedSecrets) > 0 {
+		audit("SECRET_ACCESSED", r, "names", strings.Join(usedSecrets, ","), "context", "k8s_apply")
 	}
 
 	if proxyRequest(w, r, body, h.nodeStore) {
