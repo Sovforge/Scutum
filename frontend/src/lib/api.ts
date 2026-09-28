@@ -1155,6 +1155,39 @@ export function getTLSMode(): Promise<{ mode: string; domain?: string; email?: s
   return get('/system/tls-mode')
 }
 
+// ── Certificates (Settings → Certificates) ────────────────────────────────
+// Real inventory of the hub's own TLS server certificate and, if mTLS is
+// configured, the CA used to verify inbound client certs — parsed from the
+// files CERT_FILE/KEY_FILE/CA_CERT_FILE point at. Only meaningful in
+// "manual" mode: ACME-issued certs renew themselves automatically, and
+// there's nothing to inventory when TLS is off. Node identity in this mesh
+// is a WireGuard key, not an x509 cert, so there is no per-node cert data.
+export interface CertInfo {
+  role: 'server' | 'ca'
+  subject: string
+  issuer: string
+  serial_number: string
+  not_before: string
+  not_after: string
+  days_remaining: number
+  expiring_soon: boolean
+  sans: string[]
+}
+
+export interface CertificatesResponse {
+  mode: 'acme' | 'manual' | 'none'
+  warn_days: number
+  certificates: CertInfo[]
+}
+
+export function getCertificates(): Promise<CertificatesResponse> {
+  return get('/admin/certificates')
+}
+
+export function rotateCertificate(role: 'server' | 'ca', certPem: string, keyPem?: string): Promise<CertInfo> {
+  return post('/admin/certificates/rotate', { role, cert_pem: certPem, key_pem: keyPem })
+}
+
 // ── System settings (Settings → General/Mesh/Nodes/Auth) ─────────────────
 // GET/PUT /settings, admin-only. All fields are genuinely persisted and
 // consumed server-side — see cmd/internal/handlers/settings_handler.go —

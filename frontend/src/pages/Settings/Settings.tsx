@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Bell, Boxes, KeyRound, Lock, Settings as SettingsIcon, Shield, ShieldAlert, Users, Webhook } from 'lucide-react'
+import { Bell, Boxes, KeyRound, Lock, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Users, Webhook } from 'lucide-react'
 import AppShell from '../../components/AppShell/AppShell'
 import Tabs, { type TabItem } from '../../components/ui/Tabs/Tabs'
 import UsersRolesTab from './tabs/UsersRolesTab'
 import RecoveryTab from './tabs/RecoveryTab'
 import SecretsTab from './tabs/SecretsTab'
 import VaultSecretsTab from './tabs/VaultSecretsTab'
+import CertificatesTab from './tabs/CertificatesTab'
 import ScimTab from './tabs/ScimTab'
 import WebhooksTab from './tabs/WebhooksTab'
 import BackupTab from './tabs/BackupTab'
@@ -16,13 +17,14 @@ import styles from './Settings.module.css'
 
 // Federation lives on the Network page (wired to the real
 // /federation/peers endpoints there) — not duplicated here.
-type Tab = 'users' | 'recovery' | 'vault' | 'secrets' | 'scim' | 'webhooks' | 'backup' | 'alerts' | 'general'
+type Tab = 'users' | 'recovery' | 'vault' | 'secrets' | 'certificates' | 'scim' | 'webhooks' | 'backup' | 'alerts' | 'general'
 
 const TABS: TabItem[] = [
   { id: 'users', label: 'Users & Roles', icon: Users },
   { id: 'recovery', label: 'Recovery', icon: ShieldAlert },
   { id: 'vault', label: 'Secrets', icon: Lock },
   { id: 'secrets', label: 'K8s Secrets', icon: KeyRound },
+  { id: 'certificates', label: 'Certificates', icon: ShieldCheck },
   { id: 'scim', label: 'SCIM', icon: Boxes },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook },
   { id: 'backup', label: 'Backup', icon: Shield },
@@ -59,6 +61,7 @@ function Settings() {
         {tab === 'recovery' && <RecoveryTab />}
         {tab === 'vault' && <VaultSecretsTab />}
         {tab === 'secrets' && <SecretsTab />}
+        {tab === 'certificates' && <CertificatesTab />}
         {tab === 'scim' && <ScimTab />}
         {tab === 'webhooks' && <WebhooksTab />}
         {tab === 'backup' && <BackupTab />}

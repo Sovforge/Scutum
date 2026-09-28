@@ -29,6 +29,7 @@ import (
 	scutumacme "scutum/cmd/internal/acme"
 	"scutum/cmd/internal/alerts"
 	"scutum/cmd/internal/auth"
+	"scutum/cmd/internal/certs"
 	"scutum/cmd/internal/handlers"
 	"scutum/cmd/internal/kms"
 	"scutum/cmd/internal/metrics"
@@ -248,6 +249,35 @@ func main() {
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 		clientTLSConfig.RootCAs = caCertPool
 		logger.Info("mTLS enabled", "ca_file", caCertFile)
+	}
+
+	// --- Certificate inventory & in-place rotation (issue #29) ---
+	// Only meaningful for the manual CERT_FILE/KEY_FILE(/CA_CERT_FILE) path —
+	// ACME-issued certs already renew themselves automatically, and there's
+	// nothing to rotate when TLS is off entirely.
+	tlsMode := "none"
+	if scutumacme.FromEnv(secretsDir).Enabled() {
+		tlsMode = "acme"
+	} else if useTLS {
+		tlsMode = "manual"
+	}
+	var certStore *certs.Store
+	if tlsMode == "manual" {
+		certStore, err = certs.NewStore(certFile, keyFile, caCertFile)
+		if err != nil {
+			logger.Fatal("failed to initialize certificate store", "error", err)
+		}
+		// GetConfigForClient is checked fresh on every handshake, so a
+		// rotation via the API below takes effect for the very next
+		// connection — no restart, and no unsynchronized reads of the
+		// Certificates/ClientCAs fields this config would otherwise need.
+		tlsConfig.GetConfigForClient = certStore.GetConfigForClient
+	}
+	certExpiryWarnDays := 30
+	if v := os.Getenv("CERT_EXPIRY_WARN_DAYS"); v != "" {
+		if d, err := strconv.Atoi(v); err == nil && d > 0 {
+			certExpiryWarnDays = d
+		}
 	}
 
 	// meshTLSConfig is used for node-to-node HTTPS API calls (sync, proxy, endpoint
@@ -683,6 +713,47 @@ func main() {
 	// Alert evaluator
 	go alerts.NewEvaluator(db, dispatcher).Start(ctx)
 
+	// Certificates: inventory/rotation API, plus a daily expiry check that
+	// fires a webhook once a cert is within certExpiryWarnDays of NotAfter.
+	// Only meaningful in "manual" TLS mode — see the comment where certStore
+	// is constructed above.
+	certsCtrl := handlers.NewCertificatesHandler(certStore, tlsMode, certExpiryWarnDays)
+	apiMux.Handle("GET /admin/certificates", require("admin", "admin", certsCtrl.HandleList))
+	apiMux.Handle("POST /admin/certificates/rotate", require("admin", "admin", certsCtrl.HandleRotate))
+	if certStore != nil {
+		go func() {
+			checkExpiring := func() {
+				for _, c := range certStore.Info(certExpiryWarnDays) {
+					if !c.ExpiringSoon {
+						continue
+					}
+					logger.Warn("certificate expiring soon", "role", c.Role, "subject", c.Subject, "days_remaining", c.DaysRemaining)
+					dispatcher.Send(webhooks.Event{
+						Type:      "certificate.expiring",
+						Timestamp: time.Now(),
+						Payload: map[string]any{
+							"role":           c.Role,
+							"subject":        c.Subject,
+							"not_after":      c.NotAfter.Format(time.RFC3339),
+							"days_remaining": c.DaysRemaining,
+						},
+					})
+				}
+			}
+			checkExpiring()
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					checkExpiring()
+				}
+			}
+		}()
+	}
+
 	// Backup & restore
 	backupDriver := "sqlite"
 	backupSQLitePath := filepath.Join(dataDir, "scutum.db")
@@ -816,7 +887,16 @@ func main() {
 	} else if useTLS {
 		logger.Info("scutum API starting (HTTPS)", "addr", port, "cert", certFile)
 		go func() {
-			if err := server.ListenAndServeTLS(certFile, keyFile); !errors.Is(err, http.ErrServerClosed) {
+			// tls.Listen + Serve (rather than ListenAndServeTLS(certFile, keyFile))
+			// so tlsConfig.GetConfigForClient — wired to certStore above — is what
+			// actually serves the cert on every handshake, letting rotation take
+			// effect without a restart. ListenAndServeTLS would otherwise re-read
+			// certFile/keyFile once at startup and ignore GetConfigForClient.
+			ln, err := tls.Listen("tcp", port, tlsConfig)
+			if err != nil {
+				logger.Fatal("tls listener failed", "error", err)
+			}
+			if err := server.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 				logger.Fatal("https server failed", "error", err)
 			}
 		}()
