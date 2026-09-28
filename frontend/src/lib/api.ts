@@ -274,6 +274,63 @@ export function removeNodeFromGroup(groupId: string, nodeId: string): Promise<vo
   return del(`/groups/${groupId}/members/${nodeId}`)
 }
 
+// ── File distribution ─────────────────────────────────────────────────────
+// Real endpoints: POST /nodes/{id}/files, POST /groups/{id}/files, GET
+// /file-transfers. destination_path is always relative — it resolves under
+// a managed directory on the target node (<DATA_DIR>/distributed-files/),
+// never an arbitrary absolute host path, since Scutum typically runs as
+// root with NET_ADMIN. These use raw fetch (not the shared request()
+// helper) because a FormData body needs the browser to set its own
+// multipart Content-Type with a boundary — setting it manually breaks it.
+export interface FileTransfer {
+  id: string
+  target_type: 'node' | 'group'
+  target_id: string
+  node_id: string
+  node_name: string
+  filename: string
+  destination_path: string
+  permissions: string
+  size_bytes: number
+  status: 'pending' | 'in_progress' | 'done' | 'failed'
+  error?: string
+  created_at: string
+  completed_at?: string
+}
+
+export interface DistributeFileOptions {
+  destinationPath: string
+  permissions?: string // octal, e.g. "0644"
+  templateVars?: Record<string, string> // opt-in — presence (even {}) enables {{.NodeIP}}/{{.NodeName}}/{{.NodeID}} substitution
+}
+
+async function postFileUpload<T>(path: string, file: File, opts: DistributeFileOptions): Promise<T> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('destination_path', opts.destinationPath)
+  if (opts.permissions) form.append('permissions', opts.permissions)
+  if (opts.templateVars) form.append('template_vars', JSON.stringify(opts.templateVars))
+
+  const res = await fetch(`${BASE}${path}`, { method: 'POST', headers: { ...authHeaders() }, body: form })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new ApiError(res.status, text.trim() || res.statusText)
+  }
+  return text ? (JSON.parse(text) as T) : (undefined as T)
+}
+
+export function distributeFileToNode(nodeId: string, file: File, opts: DistributeFileOptions): Promise<FileTransfer> {
+  return postFileUpload(`/nodes/${nodeId}/files`, file, opts)
+}
+
+export function distributeFileToGroup(groupId: string, file: File, opts: DistributeFileOptions): Promise<FileTransfer[]> {
+  return postFileUpload(`/groups/${groupId}/files`, file, opts)
+}
+
+export function listFileTransfers(limit = 50): Promise<FileTransfer[]> {
+  return get(`/file-transfers?limit=${limit}`)
+}
+
 // ── Docker ───────────────────────────────────────────────────────────────
 export interface DockerContainer {
   Id: string
