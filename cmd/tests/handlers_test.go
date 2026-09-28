@@ -42,7 +42,7 @@ func TestDockerHandlerPostDeployValidRequest(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+	handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 	handler.PostDeploy(w, req)
 
 	// Handler should respond with valid HTTP status and Content-Type
@@ -63,7 +63,7 @@ func TestDockerHandlerPostDeployInvalidJSON(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+	handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 	handler.PostDeploy(w, req)
 
 	// Should return 400 Bad Request for invalid JSON
@@ -78,7 +78,7 @@ func TestDockerHandlerPostDeployEmptyBody(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+	handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 	handler.PostDeploy(w, req)
 
 	// Should return error for empty body
@@ -114,7 +114,7 @@ func TestDockerHandlerPostDeployInvalidPorts(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
-			handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+			handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 			handler.PostDeploy(w, req)
 
 			// Should handle port validation (either 400 or 500)
@@ -139,7 +139,7 @@ func TestDockerHandlerResponseContentType(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+	handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 	handler.PostDeploy(w, req)
 
 	// On success or JSON error response, should have JSON content type
@@ -180,7 +180,7 @@ func TestDockerHandlerRequestValidation(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
-			handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+			handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 			handler.PostDeploy(w, req)
 
 			// Handler should process the request (may succeed or fail depending on validation)
@@ -221,7 +221,7 @@ func TestHandlerHTTPMethodsAndHeaders(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 
-			handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+			handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 			handler.PostDeploy(w, req)
 
 			// Verify response is valid HTTP
@@ -250,7 +250,7 @@ func TestHandlerErrorResponses(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
-			handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+			handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 			handler.PostDeploy(w, req)
 
 			if w.Code != tt.expectedCode {
