@@ -405,8 +405,9 @@ func main() {
 	}
 
 	// --- Handlers ---
-	dockerCtrl := handlers.NewDockerHandler(db)
-	kubernetesCtrl := handlers.NewKubernetesHandler(db)
+	dockerCtrl := handlers.NewDockerHandler(db, db)
+	kubernetesCtrl := handlers.NewKubernetesHandler(db, db)
+	secretsVaultCtrl := handlers.NewSecretsVaultHandler(db)
 	settingsCtrl := handlers.NewSettingsHandler(db)
 	gitCtrl := handlers.NewGitHandler()
 	s3Ctrl := handlers.NewS3Handler()
@@ -419,6 +420,7 @@ func main() {
 	pluginCtrl := handlers.NewPluginHandler(pluginRuntime, registrar)
 	authCtrl := handlers.NewAuthHandler(db, jwtSecret)
 	nodeCtrl := handlers.NewNodeHandler(db)
+	filesCtrl := handlers.NewFilesHandler(db, dataDir)
 	userCtrl := handlers.NewUserHandler(db)
 	roleCtrl := handlers.NewRoleHandler(db)
 	obsCtrl := handlers.NewObservabilityHandler(db, db)
@@ -497,6 +499,15 @@ func main() {
 	apiMux.Handle("POST /nodes/{id}/approve", require("nodes", "admin", nodeCtrl.HandleApprove))
 	apiMux.Handle("POST /nodes/{id}/reject", require("nodes", "admin", nodeCtrl.HandleReject))
 
+	// File distribution — push files to a node or a whole group over the same
+	// HMAC-authenticated hub-to-node channel Docker/Kubernetes actions use.
+	// /nodes/files/place is the endpoint every instance exposes locally (what
+	// actually writes to disk); /nodes/{id}/files and /groups/{id}/files are
+	// the hub-facing entry points that resolve a target and relay to it.
+	apiMux.Handle("POST /nodes/files/place", require("nodes", "write", filesCtrl.HandlePlace))
+	apiMux.Handle("POST /nodes/{id}/files", require("nodes", "write", filesCtrl.HandleDistributeToNode))
+	apiMux.Handle("GET /file-transfers", require("nodes", "read", filesCtrl.HandleListTransfers))
+
 	// System settings (Settings → General/Mesh/Nodes/Auth)
 	apiMux.Handle("GET /settings", require("admin", "admin", settingsCtrl.HandleGet))
 	apiMux.Handle("PUT /settings", require("admin", "admin", settingsCtrl.HandleUpdate))
@@ -564,6 +575,11 @@ func main() {
 	apiMux.Handle("POST /storage/backends/{id}/test", require("storage", "read", storageCtrl.HandleTestBackend))
 	apiMux.Handle("GET /storage/backends/{id}/buckets", require("storage", "read", storageCtrl.HandleListBuckets))
 
+	apiMux.Handle("GET /secrets", require("secrets", "read", secretsVaultCtrl.HandleList))
+	apiMux.Handle("POST /secrets", require("secrets", "write", secretsVaultCtrl.HandleCreate))
+	apiMux.Handle("PUT /secrets/{name...}", require("secrets", "write", secretsVaultCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /secrets/{name...}", require("secrets", "admin", secretsVaultCtrl.HandleDelete))
+
 	// WireGuard
 	apiMux.Handle("POST /network/peer", require("wireguard", "write", wgCtrl.HandleAddPeer))
 	apiMux.Handle("POST /network/register-endpoint", require("wireguard", "write", wgCtrl.HandleRegisterEndpoint))
@@ -622,6 +638,7 @@ func main() {
 	apiMux.Handle("GET /groups/{id}/nodes", require("nodes", "read", nodeGroupsCtrl.HandleListGroupNodes))
 	apiMux.Handle("POST /groups/{id}/members", require("nodes", "write", nodeGroupsCtrl.HandleAddMember))
 	apiMux.Handle("DELETE /groups/{id}/members/{nodeId}", require("nodes", "write", nodeGroupsCtrl.HandleRemoveMember))
+	apiMux.Handle("POST /groups/{id}/files", require("nodes", "write", filesCtrl.HandleDistributeToGroup))
 
 	// CRA compliance report (admin only)
 	apiMux.Handle("GET /compliance/report", require("admin", "admin", complianceCtrl.HandleReport))

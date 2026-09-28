@@ -224,7 +224,7 @@ func TestDockerNetworkMode(t *testing.T) {
 
 // TestDockerHandlerInitialization tests Docker handler creation
 func TestDockerHandlerInitialization(t *testing.T) {
-	handler := handlers.NewDockerHandler(&mockNodeProxyStore{})
+	handler := handlers.NewDockerHandler(&mockNodeProxyStore{}, nil)
 	if handler == nil {
 		t.Error("NewDockerHandler() returned nil")
 	}

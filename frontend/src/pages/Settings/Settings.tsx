@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Bell, Boxes, KeyRound, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Users, Webhook } from 'lucide-react'
+import { Bell, Boxes, KeyRound, Lock, Settings as SettingsIcon, Shield, ShieldAlert, ShieldCheck, Users, Webhook } from 'lucide-react'
 import AppShell from '../../components/AppShell/AppShell'
 import Tabs, { type TabItem } from '../../components/ui/Tabs/Tabs'
 import UsersRolesTab from './tabs/UsersRolesTab'
 import RecoveryTab from './tabs/RecoveryTab'
 import SecretsTab from './tabs/SecretsTab'
+import VaultSecretsTab from './tabs/VaultSecretsTab'
 import CertificatesTab from './tabs/CertificatesTab'
 import ScimTab from './tabs/ScimTab'
 import WebhooksTab from './tabs/WebhooksTab'
@@ -16,12 +17,13 @@ import styles from './Settings.module.css'
 
 // Federation lives on the Network page (wired to the real
 // /federation/peers endpoints there) — not duplicated here.
-type Tab = 'users' | 'recovery' | 'secrets' | 'certificates' | 'scim' | 'webhooks' | 'backup' | 'alerts' | 'general'
+type Tab = 'users' | 'recovery' | 'vault' | 'secrets' | 'certificates' | 'scim' | 'webhooks' | 'backup' | 'alerts' | 'general'
 
 const TABS: TabItem[] = [
   { id: 'users', label: 'Users & Roles', icon: Users },
   { id: 'recovery', label: 'Recovery', icon: ShieldAlert },
-  { id: 'secrets', label: 'Secrets', icon: KeyRound },
+  { id: 'vault', label: 'Secrets', icon: Lock },
+  { id: 'secrets', label: 'K8s Secrets', icon: KeyRound },
   { id: 'certificates', label: 'Certificates', icon: ShieldCheck },
   { id: 'scim', label: 'SCIM', icon: Boxes },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook },
@@ -57,6 +59,7 @@ function Settings() {
 
         {tab === 'users' && <UsersRolesTab users={users} setUsers={setUsers} roles={roles} setRoles={setRoles} />}
         {tab === 'recovery' && <RecoveryTab />}
+        {tab === 'vault' && <VaultSecretsTab />}
         {tab === 'secrets' && <SecretsTab />}
         {tab === 'certificates' && <CertificatesTab />}
         {tab === 'scim' && <ScimTab />}

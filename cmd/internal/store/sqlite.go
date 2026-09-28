@@ -79,6 +79,24 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		acknowledged_at DATETIME
 	)`)
 
+	// file_transfers — one row per (node, file) distribution attempt, whether
+	// the original request targeted a single node or a whole group.
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS file_transfers (
+		id               TEXT PRIMARY KEY,
+		target_type      TEXT NOT NULL,
+		target_id        TEXT NOT NULL,
+		node_id          TEXT NOT NULL,
+		node_name        TEXT NOT NULL,
+		filename         TEXT NOT NULL,
+		destination_path TEXT NOT NULL,
+		permissions      TEXT NOT NULL DEFAULT '0644',
+		size_bytes       INTEGER NOT NULL DEFAULT 0,
+		status           TEXT NOT NULL DEFAULT 'pending',
+		error            TEXT NOT NULL DEFAULT '',
+		created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		completed_at     DATETIME
+	)`)
+
 	// node_stats table — rolling 24-hour resource metric history
 	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS node_stats (
 		id           TEXT PRIMARY KEY,
@@ -230,6 +248,16 @@ CREATE TABLE IF NOT EXISTS nodes (
 			value_encrypted BLOB NOT NULL,
 			provider        TEXT NOT NULL,
 			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS app_secrets (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL UNIQUE,
+			description TEXT NOT NULL DEFAULT '',
+			created_by  TEXT NOT NULL DEFAULT '',
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_by  TEXT NOT NULL DEFAULT '',
+			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 
 		CREATE TABLE IF NOT EXISTS setup_state (

@@ -69,6 +69,21 @@ func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 			resolved_at     TIMESTAMP NULL,
 			acknowledged_at TIMESTAMP NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS file_transfers (
+			id               VARCHAR(255) PRIMARY KEY,
+			target_type      VARCHAR(20) NOT NULL,
+			target_id        VARCHAR(255) NOT NULL,
+			node_id          VARCHAR(255) NOT NULL,
+			node_name        VARCHAR(255) NOT NULL,
+			filename         VARCHAR(255) NOT NULL,
+			destination_path VARCHAR(1024) NOT NULL,
+			permissions      VARCHAR(10) NOT NULL DEFAULT '0644',
+			size_bytes       BIGINT NOT NULL DEFAULT 0,
+			status           VARCHAR(20) NOT NULL DEFAULT 'pending',
+			error            TEXT,
+			created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			completed_at     TIMESTAMP NULL
+		)`,
 		// node_stats table
 		`CREATE TABLE IF NOT EXISTS node_stats (
 			id           VARCHAR(255) PRIMARY KEY,
@@ -205,6 +220,16 @@ CREATE TABLE IF NOT EXISTS secrets (
     value_encrypted LONGBLOB NOT NULL,
     provider        VARCHAR(100) NOT NULL,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS app_secrets (
+    id          VARCHAR(255) PRIMARY KEY,
+    name        VARCHAR(512) NOT NULL UNIQUE,
+    description VARCHAR(1024) NOT NULL DEFAULT '',
+    created_by  VARCHAR(255) NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by  VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS setup_state (
