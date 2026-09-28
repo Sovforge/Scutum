@@ -389,6 +389,7 @@ func main() {
 	pluginCtrl := handlers.NewPluginHandler(pluginRuntime, registrar)
 	authCtrl := handlers.NewAuthHandler(db, jwtSecret)
 	nodeCtrl := handlers.NewNodeHandler(db)
+	filesCtrl := handlers.NewFilesHandler(db, dataDir)
 	userCtrl := handlers.NewUserHandler(db)
 	roleCtrl := handlers.NewRoleHandler(db)
 	obsCtrl := handlers.NewObservabilityHandler(db, db)
@@ -466,6 +467,15 @@ func main() {
 	apiMux.Handle("DELETE /nodes/{id}", require("nodes", "admin", nodeCtrl.HandleDelete))
 	apiMux.Handle("POST /nodes/{id}/approve", require("nodes", "admin", nodeCtrl.HandleApprove))
 	apiMux.Handle("POST /nodes/{id}/reject", require("nodes", "admin", nodeCtrl.HandleReject))
+
+	// File distribution — push files to a node or a whole group over the same
+	// HMAC-authenticated hub-to-node channel Docker/Kubernetes actions use.
+	// /nodes/files/place is the endpoint every instance exposes locally (what
+	// actually writes to disk); /nodes/{id}/files and /groups/{id}/files are
+	// the hub-facing entry points that resolve a target and relay to it.
+	apiMux.Handle("POST /nodes/files/place", require("nodes", "write", filesCtrl.HandlePlace))
+	apiMux.Handle("POST /nodes/{id}/files", require("nodes", "write", filesCtrl.HandleDistributeToNode))
+	apiMux.Handle("GET /file-transfers", require("nodes", "read", filesCtrl.HandleListTransfers))
 
 	// System settings (Settings → General/Mesh/Nodes/Auth)
 	apiMux.Handle("GET /settings", require("admin", "admin", settingsCtrl.HandleGet))
@@ -592,6 +602,7 @@ func main() {
 	apiMux.Handle("GET /groups/{id}/nodes", require("nodes", "read", nodeGroupsCtrl.HandleListGroupNodes))
 	apiMux.Handle("POST /groups/{id}/members", require("nodes", "write", nodeGroupsCtrl.HandleAddMember))
 	apiMux.Handle("DELETE /groups/{id}/members/{nodeId}", require("nodes", "write", nodeGroupsCtrl.HandleRemoveMember))
+	apiMux.Handle("POST /groups/{id}/files", require("nodes", "write", filesCtrl.HandleDistributeToGroup))
 
 	// CRA compliance report (admin only)
 	apiMux.Handle("GET /compliance/report", require("admin", "admin", complianceCtrl.HandleReport))
