@@ -362,6 +362,32 @@ CREATE TABLE IF NOT EXISTS node_group_members (
     PRIMARY KEY (group_id, node_id)
 );
 
+CREATE TABLE IF NOT EXISTS network_policies (
+    id          VARCHAR(36) PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    enabled     TINYINT NOT NULL DEFAULT 1,
+    priority    INT NOT NULL DEFAULT 100,
+    action      VARCHAR(16) NOT NULL DEFAULT 'deny',
+    protocol    VARCHAR(16) NOT NULL DEFAULT 'any',
+    port        VARCHAR(32) NOT NULL DEFAULT '',
+    src_type    VARCHAR(16) NOT NULL DEFAULT 'any',
+    src_id      VARCHAR(36) NOT NULL DEFAULT '',
+    dst_type    VARCHAR(16) NOT NULL DEFAULT 'any',
+    dst_id      VARCHAR(36) NOT NULL DEFAULT '',
+    created_by  VARCHAR(255) NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by  VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS network_policy_settings (
+    id           TINYINT PRIMARY KEY,
+    default_deny TINYINT NOT NULL DEFAULT 0,
+    updated_by   VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS audit_forwarders (
     id         VARCHAR(36) PRIMARY KEY,
     name       VARCHAR(255) NOT NULL,

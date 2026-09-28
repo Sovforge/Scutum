@@ -390,6 +390,32 @@ CREATE TABLE IF NOT EXISTS nodes (
 		PRIMARY KEY (group_id, node_id)
 	);
 
+	CREATE TABLE IF NOT EXISTS network_policies (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		enabled     INTEGER NOT NULL DEFAULT 1,
+		priority    INTEGER NOT NULL DEFAULT 100,
+		action      TEXT NOT NULL DEFAULT 'deny',
+		protocol    TEXT NOT NULL DEFAULT 'any',
+		port        TEXT NOT NULL DEFAULT '',
+		src_type    TEXT NOT NULL DEFAULT 'any',
+		src_id      TEXT NOT NULL DEFAULT '',
+		dst_type    TEXT NOT NULL DEFAULT 'any',
+		dst_id      TEXT NOT NULL DEFAULT '',
+		created_by  TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_by  TEXT NOT NULL DEFAULT '',
+		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS network_policy_settings (
+		id           INTEGER PRIMARY KEY CHECK (id = 1),
+		default_deny INTEGER NOT NULL DEFAULT 0,
+		updated_by   TEXT NOT NULL DEFAULT '',
+		updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE TABLE IF NOT EXISTS audit_forwarders (
 		id         TEXT PRIMARY KEY,
 		name       TEXT NOT NULL,

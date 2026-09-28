@@ -490,6 +490,62 @@ export function getMeshPeers(): Promise<PeerStatus[]> {
   return get('/network/peers')
 }
 
+// ── Network policy ───────────────────────────────────────────────────────
+// Rules are applied in a dedicated iptables chain hooked only off the
+// WireGuard interface's own forwarded traffic (never INPUT/OUTPUT), so a
+// bad policy — including default-deny — can never lock out the hub's own
+// management access. src/dst "any" means unrestricted; "node"/"group" match
+// against that target's resolved WireGuard mesh IP(s) at apply time.
+export interface NetworkPolicy {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  priority: number
+  action: 'allow' | 'deny'
+  protocol: 'tcp' | 'udp' | 'icmp' | 'any'
+  port: string
+  src_type: 'any' | 'node' | 'group'
+  src_id: string
+  dst_type: 'any' | 'node' | 'group'
+  dst_id: string
+  created_by: string
+  created_at: string
+  updated_by: string
+  updated_at: string
+}
+
+export type NetworkPolicyInput = Omit<NetworkPolicy, 'id' | 'created_by' | 'created_at' | 'updated_by' | 'updated_at'>
+
+export function listNetworkPolicies(): Promise<NetworkPolicy[]> {
+  return get('/network/policies')
+}
+
+export function createNetworkPolicy(payload: NetworkPolicyInput): Promise<NetworkPolicy> {
+  return post('/network/policies', payload)
+}
+
+export function updateNetworkPolicy(id: string, payload: NetworkPolicyInput): Promise<NetworkPolicy> {
+  return put(`/network/policies/${id}`, payload)
+}
+
+export function deleteNetworkPolicy(id: string): Promise<void> {
+  return del(`/network/policies/${id}`)
+}
+
+export interface NetworkPolicySettings {
+  default_deny: boolean
+  iptables_available: boolean
+}
+
+export function getNetworkPolicySettings(): Promise<NetworkPolicySettings> {
+  return get('/network/policy-settings')
+}
+
+export function setNetworkDefaultDeny(defaultDeny: boolean): Promise<void> {
+  return put('/network/policy-settings', { default_deny: defaultDeny })
+}
+
 // ── Federation ───────────────────────────────────────────────────────────
 export interface FederationPeer {
   id: string

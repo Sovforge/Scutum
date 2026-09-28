@@ -61,6 +61,10 @@ var defaultPermissions = []struct {
 	{"perm_secrets_read", "secrets:read", "secrets", "read"},
 	{"perm_secrets_write", "secrets:write", "secrets", "write"},
 	{"perm_secrets_admin", "secrets:admin", "secrets", "admin"},
+	// Network policy (mesh firewall rules)
+	{"perm_network_read", "network:read", "network", "read"},
+	{"perm_network_write", "network:write", "network", "write"},
+	{"perm_network_admin", "network:admin", "network", "admin"},
 }
 
 // rolePermissions maps role ID to the permission IDs it receives.
@@ -76,6 +80,7 @@ var rolePermissions = map[string][]string{
 		"perm_sync_read", "perm_sync_write", "perm_sync_admin",
 		"perm_admin_read", "perm_admin_write", "perm_admin_admin",
 		"perm_secrets_read", "perm_secrets_write", "perm_secrets_admin",
+		"perm_network_read", "perm_network_write", "perm_network_admin",
 	},
 	"role_operator": {
 		"perm_nodes_read", "perm_nodes_write",
@@ -87,6 +92,7 @@ var rolePermissions = map[string][]string{
 		"perm_plugins_read",
 		"perm_sync_read", "perm_sync_write",
 		"perm_secrets_read", "perm_secrets_write",
+		"perm_network_read", "perm_network_write",
 	},
 	"role_viewer": {
 		"perm_nodes_read",
@@ -99,6 +105,7 @@ var rolePermissions = map[string][]string{
 		"perm_sync_read",
 		"perm_admin_read",
 		"perm_secrets_read",
+		"perm_network_read",
 	},
 }
 

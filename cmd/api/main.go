@@ -421,6 +421,7 @@ func main() {
 	authCtrl := handlers.NewAuthHandler(db, jwtSecret)
 	nodeCtrl := handlers.NewNodeHandler(db)
 	filesCtrl := handlers.NewFilesHandler(db, dataDir)
+	networkPolicyCtrl := handlers.NewNetworkPolicyHandler(db, "wg0")
 	userCtrl := handlers.NewUserHandler(db)
 	roleCtrl := handlers.NewRoleHandler(db)
 	obsCtrl := handlers.NewObservabilityHandler(db, db)
@@ -588,6 +589,20 @@ func main() {
 	apiMux.Handle("GET /network/peers", require("wireguard", "read", wgCtrl.HandlePeerStatus))
 	apiMux.Handle("GET /network/hub-key", require("admin", "admin", wgCtrl.HandleGetHubKey))
 
+	// Network policy — rules are applied in a dedicated iptables chain
+	// hooked only off the WireGuard interface's own forwarded traffic (see
+	// cmd/internal/netpolicy), never INPUT/OUTPUT, so a bad policy can't
+	// lock out the hub's own management access.
+	apiMux.Handle("GET /network/policies", require("network", "read", networkPolicyCtrl.HandleList))
+	apiMux.Handle("POST /network/policies", require("network", "write", networkPolicyCtrl.HandleCreate))
+	apiMux.Handle("PUT /network/policies/{id}", require("network", "write", networkPolicyCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /network/policies/{id}", require("network", "admin", networkPolicyCtrl.HandleDelete))
+	apiMux.Handle("GET /network/policy-settings", require("network", "read", networkPolicyCtrl.HandleGetSettings))
+	apiMux.Handle("PUT /network/policy-settings", require("network", "admin", networkPolicyCtrl.HandleUpdateSettings))
+	// Relay target: the hub calls this on itself (in-process, via Reconcile)
+	// and, over the HMAC-signed hub-to-node channel, on every other node.
+	apiMux.Handle("POST /network/policy/apply", require("network", "write", networkPolicyCtrl.HandleApplyLocal))
+
 	// Plugin management
 	apiMux.Handle("POST /plugins/load", require("plugins", "admin", pluginCtrl.HandleLoad))
 	apiMux.Handle("POST /plugins/upload", require("plugins", "admin", pluginCtrl.HandleUpload))
@@ -712,6 +727,27 @@ func main() {
 
 	// Alert evaluator
 	go alerts.NewEvaluator(db, dispatcher).Start(ctx)
+
+	// Network policy reconciler: recomputes the full iptables rule set from
+	// the current policies every minute (same cadence as the alert
+	// evaluator) and reapplies it locally + pushes it to every node, in
+	// case something external flushed the chain or a node was offline
+	// during the last change. Policy CRUD also triggers an immediate
+	// out-of-band reconcile (see network_policy_handler.go) so changes
+	// don't wait for the next tick.
+	go func() {
+		handlers.Reconcile(ctx, db, "wg0")
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				handlers.Reconcile(ctx, db, "wg0")
+			}
+		}
+	}()
 
 	// Certificates: inventory/rotation API, plus a daily expiry check that
 	// fires a webhook once a cert is within certExpiryWarnDays of NotAfter.
