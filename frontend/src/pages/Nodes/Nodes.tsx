@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Check, ChevronDown, ChevronRight, Copy, Layers, Plus, Search, Server, Trash2, UserPlus, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, FileUp, Layers, Plus, Search, Send, Server, Trash2, UserPlus, X } from 'lucide-react'
 import AppShell from '../../components/AppShell/AppShell'
 import Button from '../../components/ui/Button/Button'
 import TextField from '../../components/ui/TextField/TextField'
@@ -19,12 +19,16 @@ import {
   createNodeGroup,
   deleteNode,
   deleteNodeGroup,
+  distributeFileToGroup,
+  distributeFileToNode,
   getGroupNodes,
   getHubKey,
+  listFileTransfers,
   listNodeGroups,
   listNodes,
   rejectNode,
   removeNodeFromGroup,
+  type FileTransfer,
   type NodeGroup,
   type NodeRecord,
 } from '../../lib/api'
@@ -297,6 +301,107 @@ function Nodes() {
     } finally {
       setGroupSaving(false)
     }
+  }
+
+  // ── File distribution ─────────────────────────────────────────────────
+  const [showDistribute, setShowDistribute] = useState(false)
+  const [distTargetType, setDistTargetType] = useState<'node' | 'group'>('node')
+  const [distTargetId, setDistTargetId] = useState('')
+  const [distFile, setDistFile] = useState<File | null>(null)
+  const [distDestPath, setDistDestPath] = useState('')
+  const [distPermissions, setDistPermissions] = useState('0644')
+  const [distUseTemplate, setDistUseTemplate] = useState(false)
+  const [distTemplateVars, setDistTemplateVars] = useState('')
+  const [distError, setDistError] = useState('')
+  const [distSaving, setDistSaving] = useState(false)
+
+  const [transfers, setTransfers] = useState<FileTransfer[]>([])
+  const [transfersLoading, setTransfersLoading] = useState(true)
+
+  async function loadTransfers() {
+    setTransfersLoading(true)
+    try {
+      setTransfers(await listFileTransfers())
+    } catch {
+      // best-effort — history section just stays empty
+    } finally {
+      setTransfersLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadTransfers()
+  }, [])
+
+  function resetDistributeForm() {
+    setDistTargetType('node')
+    setDistTargetId('')
+    setDistFile(null)
+    setDistDestPath('')
+    setDistPermissions('0644')
+    setDistUseTemplate(false)
+    setDistTemplateVars('')
+    setDistError('')
+  }
+
+  async function distribute(e: FormEvent) {
+    e.preventDefault()
+    if (!distTargetId || !distFile || !distDestPath) return
+    setDistError('')
+
+    let templateVars: Record<string, string> | undefined
+    if (distUseTemplate) {
+      try {
+        templateVars = distTemplateVars.trim() ? JSON.parse(distTemplateVars) : {}
+      } catch {
+        setDistError('Template variables must be valid JSON, e.g. {"Environment":"production"}')
+        return
+      }
+    }
+
+    setDistSaving(true)
+    try {
+      if (distTargetType === 'node') {
+        const t = await distributeFileToNode(distTargetId, distFile, {
+          destinationPath: distDestPath,
+          permissions: distPermissions || undefined,
+          templateVars,
+        })
+        toast(t.status === 'done' ? `${distFile.name} delivered to ${t.node_name}` : `Delivery to ${t.node_name} failed: ${t.error}`, t.status === 'done' ? 'success' : 'danger')
+      } else {
+        const results = await distributeFileToGroup(distTargetId, distFile, {
+          destinationPath: distDestPath,
+          permissions: distPermissions || undefined,
+          templateVars,
+        })
+        const failed = results.filter((r) => r.status !== 'done')
+        toast(
+          failed.length === 0 ? `${distFile.name} delivered to ${results.length} node${results.length !== 1 ? 's' : ''}` : `${results.length - failed.length}/${results.length} delivered — ${failed.length} failed`,
+          failed.length === 0 ? 'success' : 'danger',
+        )
+      }
+      await loadTransfers()
+      resetDistributeForm()
+      setShowDistribute(false)
+    } catch (e2) {
+      setDistError(e2 instanceof ApiError ? e2.message : 'Distribution failed')
+    } finally {
+      setDistSaving(false)
+    }
+  }
+
+  function fmtTime(iso: string): string {
+    try {
+      return new Date(iso).toLocaleString()
+    } catch {
+      return iso
+    }
+  }
+
+  function transferStatusVariant(status: FileTransfer['status']) {
+    if (status === 'done') return 'success'
+    if (status === 'failed') return 'danger'
+    return 'warning'
   }
 
   return (
@@ -608,6 +713,143 @@ function Nodes() {
                 </div>
               ))}
             </div>
+          )}
+        </Section>
+
+        <Section
+          title="File distribution"
+          action={
+            <Button variant="ghost" onClick={() => setShowDistribute((v) => !v)}>
+              <FileUp size={14} />
+              Distribute file
+            </Button>
+          }
+        >
+          {showDistribute && (
+            <form className={styles.enrollForm} onSubmit={distribute}>
+              <Callout variant="info">
+                Files are written under a managed directory on the target node
+                (<code>&lt;DATA_DIR&gt;/distributed-files/…</code>) — not an arbitrary host path.
+              </Callout>
+
+              <Select
+                label="Target"
+                id="distTargetType"
+                value={distTargetType}
+                onChange={(e) => {
+                  setDistTargetType(e.target.value as 'node' | 'group')
+                  setDistTargetId('')
+                }}
+                options={[
+                  { value: 'node', label: 'A single node' },
+                  { value: 'group', label: 'A node group' },
+                ]}
+              />
+
+              <div className="field">
+                <label htmlFor="distTargetId">{distTargetType === 'node' ? 'Node' : 'Group'}</label>
+                <select id="distTargetId" className={styles.groupSelect} value={distTargetId} onChange={(e) => setDistTargetId(e.target.value)}>
+                  <option value="">Select…</option>
+                  {distTargetType === 'node'
+                    ? nodes.map((n) => (
+                        <option key={n.id} value={n.id}>
+                          {n.name} ({n.type})
+                        </option>
+                      ))
+                    : groups.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                </select>
+              </div>
+
+              <div className="field">
+                <label htmlFor="distFile">File</label>
+                <input id="distFile" type="file" onChange={(e) => setDistFile(e.target.files?.[0] ?? null)} />
+              </div>
+
+              <TextField
+                label="Destination path (relative)"
+                id="distDestPath"
+                value={distDestPath}
+                onChange={(e) => setDistDestPath(e.target.value)}
+                placeholder="app/config.yml"
+                hint="Resolves under the managed directory on the target node — no absolute paths, no '..'."
+              />
+              <TextField
+                label="Permissions (octal)"
+                id="distPermissions"
+                value={distPermissions}
+                onChange={(e) => setDistPermissions(e.target.value)}
+                placeholder="0644"
+              />
+
+              <label className={styles.groupEmpty} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                <input type="checkbox" checked={distUseTemplate} onChange={(e) => setDistUseTemplate(e.target.checked)} />
+                Substitute template variables (e.g. <code>{'{{.NodeIP}}'}</code>, <code>{'{{.NodeName}}'}</code>)
+              </label>
+              {distUseTemplate && (
+                <div className="field">
+                  <label htmlFor="distTemplateVars">Extra variables (JSON, optional)</label>
+                  <textarea
+                    id="distTemplateVars"
+                    className={styles.textarea}
+                    rows={2}
+                    value={distTemplateVars}
+                    onChange={(e) => setDistTemplateVars(e.target.value)}
+                    placeholder='{"Environment":"production"}'
+                  />
+                </div>
+              )}
+
+              {distError && <Callout variant="danger">{distError}</Callout>}
+              <div className={styles.sectionActions}>
+                <Button type="button" variant="ghost" onClick={() => setShowDistribute(false)} disabled={distSaving}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={distSaving || !distTargetId || !distFile || !distDestPath}>
+                  <Send size={14} />
+                  {distSaving ? 'Sending…' : 'Distribute'}
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {transfersLoading ? (
+            <div className={styles.loadingRow}>Loading…</div>
+          ) : transfers.length === 0 ? (
+            <EmptyState icon={FileUp} title="No transfers yet" description="Distribute a file to a node or group to see its history here." />
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <th>Node</th>
+                  <th>File</th>
+                  <th>Destination</th>
+                  <th>Status</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transfers.map((t) => (
+                  <tr key={t.id}>
+                    <td className="cell-name">
+                      {t.node_name}
+                      {t.target_type === 'group' && <span className={styles.groupDesc}> (group)</span>}
+                    </td>
+                    <td className="cell-muted">{t.filename}</td>
+                    <td className="cell-muted">{t.destination_path}</td>
+                    <td>
+                      <span title={t.error}>
+                        <Badge variant={transferStatusVariant(t.status)}>{t.status}</Badge>
+                      </span>
+                    </td>
+                    <td className="cell-muted">{fmtTime(t.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
           )}
         </Section>
       </div>

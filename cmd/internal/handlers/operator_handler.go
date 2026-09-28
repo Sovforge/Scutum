@@ -38,10 +38,14 @@ type bootstrapResponse struct {
 func (h *OperatorHandler) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// --- hub_hmac_key ---
-	hmacKeyBytes, err := h.store.GetSecret(ctx, "hub_hmac_key")
+	// --- HMAC key ---
+	// A hub instance stores its own key under "sync_hmac_key" — "hub_hmac_key"
+	// is the name a *remote* install stores the hub's key under locally after
+	// receiving it (see setup.go), not what the hub itself has. Reading
+	// "hub_hmac_key" here always 500'd on every real hub install.
+	hmacKeyBytes, err := h.store.GetSecret(ctx, "sync_hmac_key")
 	if err != nil {
-		http.Error(w, "hub_hmac_key not available", http.StatusInternalServerError)
+		http.Error(w, "sync_hmac_key not available", http.StatusInternalServerError)
 		return
 	}
 	hmacKeyB64 := base64.StdEncoding.EncodeToString(hmacKeyBytes)

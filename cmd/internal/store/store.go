@@ -743,6 +743,65 @@ func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, e
 	return out, rows.Err()
 }
 
+// ── File transfers ──────────────────────────────────────────────────────────
+// One row per (node, file) distribution attempt — a group target expands to
+// one row per member node, so status/errors are always tracked per-node even
+// when the original request named a group.
+
+type FileTransfer struct {
+	ID              string `json:"id"`
+	TargetType      string `json:"target_type"` // "node" | "group"
+	TargetID        string `json:"target_id"`
+	NodeID          string `json:"node_id"`
+	NodeName        string `json:"node_name"`
+	Filename        string `json:"filename"`
+	DestinationPath string `json:"destination_path"`
+	Permissions     string `json:"permissions"`
+	SizeBytes       int64  `json:"size_bytes"`
+	Status          string `json:"status"` // pending | in_progress | done | failed
+	Error           string `json:"error,omitempty"`
+	CreatedAt       string `json:"created_at"`
+	CompletedAt     string `json:"completed_at,omitempty"`
+}
+
+func (s *Store) CreateFileTransfer(ctx context.Context, t FileTransfer) error {
+	q := fmt.Sprintf(`INSERT INTO file_transfers
+		(id, target_type, target_id, node_id, node_name, filename, destination_path, permissions, size_bytes, status, created_at)
+		VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)`,
+		s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9), s.ph(10), s.ph(11))
+	_, err := s.db.ExecContext(ctx, q, t.ID, t.TargetType, t.TargetID, t.NodeID, t.NodeName, t.Filename,
+		t.DestinationPath, t.Permissions, t.SizeBytes, t.Status, t.CreatedAt)
+	return err
+}
+
+func (s *Store) UpdateFileTransferStatus(ctx context.Context, id, status, errMsg, completedAt string) error {
+	q := fmt.Sprintf(`UPDATE file_transfers SET status=%s, error=%s, completed_at=%s WHERE id=%s`,
+		s.ph(1), s.ph(2), s.ph(3), s.ph(4))
+	_, err := s.db.ExecContext(ctx, q, status, errMsg, nullableString(completedAt), id)
+	return err
+}
+
+func (s *Store) ListFileTransfers(ctx context.Context, limit int) ([]FileTransfer, error) {
+	q := fmt.Sprintf(`SELECT id, target_type, target_id, node_id, node_name, filename, destination_path,
+		permissions, size_bytes, status, error, created_at, COALESCE(completed_at,'')
+		FROM file_transfers ORDER BY created_at DESC LIMIT %s`, s.ph(1))
+	rows, err := s.db.QueryContext(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileTransfer
+	for rows.Next() {
+		var t FileTransfer
+		if err := rows.Scan(&t.ID, &t.TargetType, &t.TargetID, &t.NodeID, &t.NodeName, &t.Filename, &t.DestinationPath,
+			&t.Permissions, &t.SizeBytes, &t.Status, &t.Error, &t.CreatedAt, &t.CompletedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func nullableString(s string) interface{} {

@@ -67,6 +67,21 @@ func (d PostgresDriver) Migrate(ctx context.Context, db *sql.DB) error {
 			resolved_at     TIMESTAMPTZ,
 			acknowledged_at TIMESTAMPTZ
 		)`,
+		`CREATE TABLE IF NOT EXISTS file_transfers (
+			id               TEXT PRIMARY KEY,
+			target_type      TEXT NOT NULL,
+			target_id        TEXT NOT NULL,
+			node_id          TEXT NOT NULL,
+			node_name        TEXT NOT NULL,
+			filename         TEXT NOT NULL,
+			destination_path TEXT NOT NULL,
+			permissions      TEXT NOT NULL DEFAULT '0644',
+			size_bytes       BIGINT NOT NULL DEFAULT 0,
+			status           TEXT NOT NULL DEFAULT 'pending',
+			error            TEXT NOT NULL DEFAULT '',
+			created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			completed_at     TIMESTAMPTZ
+		)`,
 		// otel_metrics table
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
 			id         TEXT PRIMARY KEY,
