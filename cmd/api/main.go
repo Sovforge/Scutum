@@ -406,6 +406,7 @@ func main() {
 
 	// --- Handlers ---
 	dockerCtrl := handlers.NewDockerHandler(db, db)
+	dockerCtrl.SetGroupStore(db)
 	kubernetesCtrl := handlers.NewKubernetesHandler(db, db)
 	secretsVaultCtrl := handlers.NewSecretsVaultHandler(db)
 	settingsCtrl := handlers.NewSettingsHandler(db)
@@ -539,6 +540,22 @@ func main() {
 	apiMux.Handle("GET /docker/containers/{id}/stats-snapshot", requireDocker("docker", "read", dockerCtrl.HandleStatsSnapshot))
 	apiMux.Handle("GET /docker/containers/{id}/logs", requireDocker("docker", "read", dockerCtrl.HandleLogs))
 	apiMux.Handle("GET /docker/containers/{id}/terminal", requireDocker("docker", "write", dockerCtrl.HandleTerminal))
+
+	// Image management (#30) — local/X-Target-Node-proxied endpoints...
+	apiMux.Handle("GET /docker/images", requireDocker("docker", "read", dockerCtrl.HandleListImages))
+	apiMux.Handle("POST /docker/images/pull", requireDocker("docker", "write", dockerCtrl.HandlePullImage))
+	apiMux.Handle("DELETE /docker/images/{imageId}", requireDocker("docker", "admin", dockerCtrl.HandleRemoveImage))
+	apiMux.Handle("POST /docker/images/prune", requireDocker("docker", "admin", dockerCtrl.HandlePruneImages))
+	// ...and the same operations addressed by node ID in the path — the hub
+	// relays to the target node itself, so these aren't gated on the HUB
+	// having a local docker socket the way the routes above are.
+	apiMux.Handle("GET /nodes/{id}/images", require("docker", "read", dockerCtrl.HandleListImagesForNode))
+	apiMux.Handle("POST /nodes/{id}/images/pull", require("docker", "write", dockerCtrl.HandlePullImageForNode))
+	apiMux.Handle("DELETE /nodes/{id}/images/{imageId}", require("docker", "admin", dockerCtrl.HandleRemoveImageForNode))
+	apiMux.Handle("POST /nodes/{id}/images/prune", require("docker", "admin", dockerCtrl.HandlePruneImagesForNode))
+	// Group-targeted: the "image diff" view and fan-out pull.
+	apiMux.Handle("GET /groups/{id}/images", require("docker", "read", dockerCtrl.HandleListImagesForGroup))
+	apiMux.Handle("POST /groups/{id}/images/pull", require("docker", "write", dockerCtrl.HandlePullImageForGroup))
 
 	// Kubernetes
 	apiMux.Handle("GET /kubernetes/summary", require("kubernetes", "read", kubernetesCtrl.HandleK8sSummary))

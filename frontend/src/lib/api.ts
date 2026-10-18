@@ -447,6 +447,75 @@ export function deployCompose(yaml: string, nodeId?: string): Promise<{ output?:
   )
 }
 
+// ── Docker images ────────────────────────────────────────────────────────
+export interface DockerImage {
+  Id: string
+  RepoTags: string[] | null
+  Created: number // unix seconds
+  Size: number
+}
+
+export interface PullImageRequest {
+  image: string
+  username?: string
+  password?: string // may be "secret://<name>" to resolve through the secrets vault
+}
+
+export interface PullImageResult {
+  image: string
+  success: boolean
+  error?: string
+}
+
+export interface ImageDeleteEntry {
+  Untagged?: string
+  Deleted?: string
+}
+
+export interface ImagePruneResult {
+  ImagesDeleted: ImageDeleteEntry[]
+  SpaceReclaimed: number
+}
+
+// Same convention as listContainers — explicit nodeId, omitted means local.
+export function listImages(nodeId?: string): Promise<DockerImage[]> {
+  return get('/docker/images', nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+export function pullImage(payload: PullImageRequest, nodeId?: string): Promise<PullImageResult> {
+  return post('/docker/images/pull', payload, nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+export function removeImage(imageId: string, nodeId?: string): Promise<ImageDeleteEntry[]> {
+  return del(`/docker/images/${encodeURIComponent(imageId)}`, nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+export function pruneImages(nodeId?: string): Promise<ImagePruneResult> {
+  return post('/docker/images/prune', undefined, nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+// Group-targeted: the "image diff" view and fan-out pull.
+export interface GroupNodeImages {
+  node_id: string
+  node_name: string
+  images?: DockerImage[]
+  error?: string
+}
+
+export function listGroupImages(groupId: string): Promise<GroupNodeImages[]> {
+  return get(`/groups/${groupId}/images`)
+}
+
+export interface GroupNodePullResult {
+  node_id: string
+  node_name: string
+  result: PullImageResult
+}
+
+export function pullImageToGroup(groupId: string, payload: PullImageRequest): Promise<GroupNodePullResult[]> {
+  return post(`/groups/${groupId}/images/pull`, payload)
+}
+
 // ── Network ──────────────────────────────────────────────────────────────
 export interface MeshSummary {
   total: number
