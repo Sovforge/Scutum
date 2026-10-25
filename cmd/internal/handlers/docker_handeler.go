@@ -15,13 +15,23 @@ import (
 
 	"scutum/cmd/internal/clients"
 	"scutum/cmd/internal/models"
+	"scutum/cmd/internal/store"
 	"scutum/cmd/internal/utils"
 )
 
+// volumeGroupStore is the minimal dependency HandleListVolumesForGroup needs.
+// Set via SetGroupStore rather than added to the constructor, so existing
+// NewDockerHandler(ns, secrets) call sites (main.go and several tests) don't
+// need to change.
+type volumeGroupStore interface {
+	ListNodesInGroup(ctx context.Context, groupID string) ([]store.NodeRecord, error)
+}
+
 type DockerHandler struct {
-	client    *clients.DockerClient
-	nodeStore nodeProxyStore
-	secrets   secretsValueStore
+	client     *clients.DockerClient
+	nodeStore  nodeProxyStore
+	secrets    secretsValueStore
+	groupStore volumeGroupStore
 }
 
 func NewDockerHandler(ns nodeProxyStore, secrets secretsValueStore) *DockerHandler {
@@ -30,6 +40,20 @@ func NewDockerHandler(ns nodeProxyStore, secrets secretsValueStore) *DockerHandl
 		nodeStore: ns,
 		secrets:   secrets,
 	}
+}
+
+// SetGroupStore enables the cross-node group volume view. Optional —
+// HandleListVolumesForGroup returns a clear error if it's never called.
+func (h *DockerHandler) SetGroupStore(gs volumeGroupStore) {
+	h.groupStore = gs
+}
+
+// SetClient overrides the Docker client NewDockerHandler otherwise builds
+// via utils.GetPlatformClient(). Exported for tests, which need to point the
+// handler at a fake Docker daemon (httptest.Server) instead of a real
+// socket; production code never needs to call this.
+func (h *DockerHandler) SetClient(c *clients.DockerClient) {
+	h.client = c
 }
 
 // PostDeploy handles the deployment of a new container based on the user's request.

@@ -54,3 +54,24 @@ type DeployResponse struct {
 	Message string `json:"message"`
 	Error   string `json:"error,omitempty"`
 }
+
+// Volume mirrors the Docker Engine API's volume shape, with RefCount/Size
+// (only available from /system/df, not the plain /volumes list) merged in
+// and InUse derived from RefCount for the frontend's badge.
+type Volume struct {
+	Name       string            `json:"Name"`
+	Driver     string            `json:"Driver"`
+	Mountpoint string            `json:"Mountpoint"`
+	CreatedAt  string            `json:"CreatedAt,omitempty"`
+	Scope      string            `json:"Scope,omitempty"`
+	Labels     map[string]string `json:"Labels,omitempty"`
+	Options    map[string]string `json:"Options,omitempty"`
+	RefCount   int64             `json:"RefCount"`
+	Size       int64             `json:"Size"`
+	InUse      bool              `json:"InUse"`
+}
+
+type VolumePruneResult struct {
+	VolumesDeleted []string `json:"VolumesDeleted"`
+	SpaceReclaimed int64    `json:"SpaceReclaimed"`
+}

@@ -406,6 +406,7 @@ func main() {
 
 	// --- Handlers ---
 	dockerCtrl := handlers.NewDockerHandler(db, db)
+	dockerCtrl.SetGroupStore(db)
 	kubernetesCtrl := handlers.NewKubernetesHandler(db, db)
 	secretsVaultCtrl := handlers.NewSecretsVaultHandler(db)
 	settingsCtrl := handlers.NewSettingsHandler(db)
@@ -539,6 +540,14 @@ func main() {
 	apiMux.Handle("GET /docker/containers/{id}/stats-snapshot", requireDocker("docker", "read", dockerCtrl.HandleStatsSnapshot))
 	apiMux.Handle("GET /docker/containers/{id}/logs", requireDocker("docker", "read", dockerCtrl.HandleLogs))
 	apiMux.Handle("GET /docker/containers/{id}/terminal", requireDocker("docker", "write", dockerCtrl.HandleTerminal))
+	apiMux.Handle("GET /docker/volumes", requireDocker("docker", "read", dockerCtrl.HandleListVolumes))
+	apiMux.Handle("GET /docker/volumes/{name}", requireDocker("docker", "read", dockerCtrl.HandleInspectVolume))
+	apiMux.Handle("DELETE /docker/volumes/{name}", requireDocker("docker", "admin", dockerCtrl.HandleRemoveVolume))
+	apiMux.Handle("POST /docker/volumes/prune", requireDocker("docker", "admin", dockerCtrl.HandlePruneVolumes))
+	apiMux.Handle("GET /nodes/{id}/volumes", require("docker", "read", dockerCtrl.HandleListVolumesForNode))
+	apiMux.Handle("GET /nodes/{id}/volumes/{name}", require("docker", "read", dockerCtrl.HandleInspectVolumeForNode))
+	apiMux.Handle("DELETE /nodes/{id}/volumes/{name}", require("docker", "admin", dockerCtrl.HandleRemoveVolumeForNode))
+	apiMux.Handle("POST /nodes/{id}/volumes/prune", require("docker", "admin", dockerCtrl.HandlePruneVolumesForNode))
 
 	// Kubernetes
 	apiMux.Handle("GET /kubernetes/summary", require("kubernetes", "read", kubernetesCtrl.HandleK8sSummary))
@@ -639,6 +648,7 @@ func main() {
 	apiMux.Handle("POST /groups/{id}/members", require("nodes", "write", nodeGroupsCtrl.HandleAddMember))
 	apiMux.Handle("DELETE /groups/{id}/members/{nodeId}", require("nodes", "write", nodeGroupsCtrl.HandleRemoveMember))
 	apiMux.Handle("POST /groups/{id}/files", require("nodes", "write", filesCtrl.HandleDistributeToGroup))
+	apiMux.Handle("GET /groups/{id}/volumes", require("docker", "read", dockerCtrl.HandleListVolumesForGroup))
 
 	// CRA compliance report (admin only)
 	apiMux.Handle("GET /compliance/report", require("admin", "admin", complianceCtrl.HandleReport))

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, ChevronDown, ChevronRight, FileUp, Upload } from 'lucide-react'
+import { Box, ChevronDown, ChevronRight, Database, FileUp, Trash2, Upload } from 'lucide-react'
 import AppShell from '../../components/AppShell/AppShell'
 import Badge from '../../components/ui/Badge/Badge'
 import Button from '../../components/ui/Button/Button'
@@ -16,7 +16,11 @@ import {
   deployCompose,
   listContainers,
   listNodes,
+  listVolumes,
+  pruneVolumes,
+  removeVolume,
   type DockerContainer,
+  type DockerVolume,
   type NodeRecord,
 } from '../../lib/api'
 import { useNodeSelection } from '../../lib/nodeSelection'
@@ -27,6 +31,19 @@ const FILTERS: Filter[] = ['all', 'running', 'exited', 'paused']
 
 type NodeTarget = { id: string; name: string; role: string; nodeId?: string }
 type Group = { node: NodeTarget; containers: DockerContainer[] }
+type VolumeGroup = { node: NodeTarget; volumes: DockerVolume[] }
+
+function formatBytes(n: number): string {
+  if (!n) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`
+}
 
 function containerName(c: DockerContainer): string {
   return (c.Names?.[0] ?? c.Id.slice(0, 12)).replace(/^\//, '')
@@ -75,7 +92,76 @@ function Containers() {
 
   useEffect(() => {
     loadContainers()
+    loadVolumes()
   }, [])
+
+  // ── Volumes ───────────────────────────────────────────────────────────
+  const [volumeGroups, setVolumeGroups] = useState<VolumeGroup[]>([])
+  const [volumesLoading, setVolumesLoading] = useState(true)
+  const [volumesError, setVolumesError] = useState('')
+  const [volumeCollapsed, setVolumeCollapsed] = useState<Set<string>>(new Set())
+  const [volumeActionError, setVolumeActionError] = useState<Record<string, string>>({})
+  const [pruneConfirmFor, setPruneConfirmFor] = useState<string | null>(null)
+  const [pruning, setPruning] = useState<Set<string>>(new Set())
+
+  async function loadVolumes() {
+    setVolumesLoading(true)
+    setVolumesError('')
+    try {
+      const nodes = await listNodes().catch(() => [] as NodeRecord[])
+      const targets: NodeTarget[] = [
+        { id: 'local', name: 'Local', role: 'hub' },
+        ...nodes.filter((n) => n.type !== 'hub').map((n) => ({ id: n.id, name: n.name, role: n.type, nodeId: n.id })),
+      ]
+      const results = await Promise.allSettled(targets.map((t) => listVolumes(t.nodeId)))
+      setVolumeGroups(targets.map((t, i) => {
+        const res = results[i]
+        return { node: t, volumes: res.status === 'fulfilled' ? res.value : [] }
+      }))
+    } catch (e) {
+      setVolumesError(e instanceof ApiError ? e.message : 'Failed to load volumes')
+    } finally {
+      setVolumesLoading(false)
+    }
+  }
+
+  function toggleVolumeNode(id: string) {
+    setVolumeCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function handleRemoveVolume(name: string, nodeId: string | undefined, groupId: string) {
+    setVolumeActionError((prev) => ({ ...prev, [`${groupId}:${name}`]: '' }))
+    try {
+      await removeVolume(name, nodeId)
+      await loadVolumes()
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : 'Failed to remove volume'
+      setVolumeActionError((prev) => ({ ...prev, [`${groupId}:${name}`]: message }))
+    }
+  }
+
+  async function handlePruneVolumes(nodeId: string | undefined, groupId: string) {
+    setPruning((prev) => new Set(prev).add(groupId))
+    setPruneConfirmFor(null)
+    try {
+      await pruneVolumes(nodeId)
+      await loadVolumes()
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : 'Failed to prune volumes'
+      setVolumeActionError((prev) => ({ ...prev, [`${groupId}:__prune`]: message }))
+    } finally {
+      setPruning((prev) => {
+        const next = new Set(prev)
+        next.delete(groupId)
+        return next
+      })
+    }
+  }
 
   function openContainer(id: string, nodeId?: string) {
     selectNode(nodeId ?? null)
@@ -314,6 +400,124 @@ function Containers() {
                       ))}
                     </tbody>
                   </Table>
+                )}
+              </Section>
+            )
+          })
+        )}
+
+        <div className={styles.reportHeader}>
+          <div>
+            <p className="eyebrow">Docker Fleet</p>
+            <h2 className={styles.reportTitle}>Volumes</h2>
+          </div>
+        </div>
+
+        {volumesError ? (
+          <Section>
+            <Callout variant="danger">{volumesError}</Callout>
+          </Section>
+        ) : volumesLoading ? (
+          <Section>
+            <div className={styles.toolbar}>Loading…</div>
+          </Section>
+        ) : (
+          volumeGroups.map((group) => {
+            const groupId = group.node.id
+            const isCollapsed = volumeCollapsed.has(groupId)
+            const unused = group.volumes.filter((v) => !v.InUse)
+            const pruneError = volumeActionError[`${groupId}:__prune`]
+            const isPruning = pruning.has(groupId)
+            return (
+              <Section
+                key={groupId}
+                title={group.node.name}
+                action={
+                  <div className={styles.sectionActions}>
+                    <Badge variant="neutral">{group.volumes.length} volumes</Badge>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setPruneConfirmFor(groupId)}
+                      disabled={unused.length === 0 || isPruning}
+                    >
+                      <Trash2 size={14} />
+                      {isPruning ? 'Pruning…' : 'Prune unused'}
+                    </Button>
+                    <button
+                      type="button"
+                      className={styles.collapseToggle}
+                      onClick={() => toggleVolumeNode(groupId)}
+                      aria-label={isCollapsed ? `Expand ${group.node.name}` : `Collapse ${group.node.name}`}
+                    >
+                      <ChevronDown size={16} className={isCollapsed ? styles.chevronCollapsed : undefined} />
+                    </button>
+                  </div>
+                }
+              >
+                {pruneConfirmFor === groupId && (
+                  <Callout variant="warning">
+                    <p>
+                      This will permanently delete {unused.length} unused volume{unused.length === 1 ? '' : 's'}:{' '}
+                      {unused.map((v) => v.Name).join(', ')}
+                    </p>
+                    <div className={styles.sectionActions}>
+                      <Button variant="ghost" onClick={() => handlePruneVolumes(group.node.nodeId, groupId)}>
+                        Confirm prune
+                      </Button>
+                      <Button variant="ghost" onClick={() => setPruneConfirmFor(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </Callout>
+                )}
+                {pruneError && <Callout variant="danger">{pruneError}</Callout>}
+
+                {!isCollapsed && (
+                  group.volumes.length === 0 ? (
+                    <EmptyState icon={Database} title="No volumes" description="This node has no Docker volumes." />
+                  ) : (
+                    <Table>
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Driver</th>
+                          <th>Mountpoint</th>
+                          <th>Size</th>
+                          <th>Created</th>
+                          <th>Status</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.volumes.map((v) => {
+                          const rowError = volumeActionError[`${groupId}:${v.Name}`]
+                          return (
+                            <tr key={v.Name}>
+                              <td className="cell-name">{v.Name}</td>
+                              <td className="cell-muted">{v.Driver}</td>
+                              <td className="cell-muted">{v.Mountpoint}</td>
+                              <td className="cell-muted">{formatBytes(v.Size)}</td>
+                              <td className="cell-muted">{v.CreatedAt ? new Date(v.CreatedAt).toLocaleString() : '—'}</td>
+                              <td>
+                                <Badge variant={v.InUse ? 'warning' : 'neutral'}>{v.InUse ? 'In use' : 'Unused'}</Badge>
+                                {rowError && <div className={styles.inlineError}>{rowError}</div>}
+                              </td>
+                              <td>
+                                <Button
+                                  variant="ghost"
+                                  disabled={v.InUse}
+                                  title={v.InUse ? 'Volume is in use by a container' : 'Remove volume'}
+                                  onClick={() => handleRemoveVolume(v.Name, group.node.nodeId, groupId)}
+                                >
+                                  <Trash2 size={14} />
+                                </Button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </Table>
+                  )
                 )}
               </Section>
             )
