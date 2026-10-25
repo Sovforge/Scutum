@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@material/material-color-utilities": "^0.4.0",
-    "lucide-react": "^1.24.0",
+    "lucide-react": "^1.61.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
