@@ -19,7 +19,7 @@ services:
     environment:
       DATA_DIR: /data
       SECRETS_DIR: /secrets
-      PORT: "8080"
+      PORT: "443"
       CERT_FILE: /secrets/server.crt
       KEY_FILE: /secrets/server.key
       AUDIT_RETENTION_DAYS: "365"
@@ -27,10 +27,10 @@ services:
       LOG_LEVEL: info
       AUDIT_ENABLED: "true"
       # DATABASE_URL: postgres://user:pass@host:5432/scutum  # omit for SQLite
-      # CA_CERT_FILE: /secrets/ca.crt                        # enables mTLS if set
+      # CA_CERT_FILE: /secrets/ca.crt                        # enables full mTLS (requires client certs on EVERY connection, including the browser UI — do not enable without provisioning browser client certs)
 
     healthcheck:
-      test: ["CMD", "curl", "-fk", "https://localhost:8080/api/health"]
+      test: ["CMD", "curl", "-fk", "https://localhost:443/api/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s

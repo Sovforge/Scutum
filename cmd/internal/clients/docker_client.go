@@ -21,6 +21,19 @@ type DockerClient struct {
 	dial       DialFunc
 }
 
+// APIError preserves the Docker Engine API's actual HTTP status code, so
+// callers that need to distinguish e.g. 404 (not found) from 409 (conflict,
+// such as deleting an in-use volume) can do so instead of treating every
+// non-2xx response as a generic failure.
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("Docker API error: %d %s", e.StatusCode, e.Body)
+}
+
 // NewDockerClient creates a new DockerClient with the given HTTP client, base URL,
 // and a dial function used by Hijack to open raw connections to the daemon.
 func NewDockerClient(httpClient *http.Client, baseurl string, dial DialFunc) *DockerClient {
@@ -54,7 +67,8 @@ func (c *DockerClient) Do(method, path string, body interface{}, out interface{}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("Docker API error: %s", resp.Status)
+		respBody, _ := io.ReadAll(resp.Body)
+		return &APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	if out != nil {

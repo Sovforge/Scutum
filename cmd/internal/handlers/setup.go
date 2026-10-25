@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	cryptorand "crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -312,7 +313,7 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.WireGuard.HubHMACKey != "" {
-		if keyBytes, err := hex.DecodeString(req.WireGuard.HubHMACKey); err == nil {
+		if keyBytes, err := base64.StdEncoding.DecodeString(req.WireGuard.HubHMACKey); err == nil {
 			_ = h.store.SetSecret(r.Context(), "hub_hmac_key", keyBytes)
 		}
 	}

@@ -359,6 +359,39 @@ export function listContainers(nodeId?: string): Promise<DockerContainer[]> {
   return get('/docker/containers', nodeId ? nodeHeaders(nodeId) : undefined)
 }
 
+// ── Volumes (Containers page) ─────────────────────────────────────────────
+export interface DockerVolume {
+  Name: string
+  Driver: string
+  Mountpoint: string
+  CreatedAt?: string
+  Scope?: string
+  Labels?: Record<string, string>
+  Options?: Record<string, string>
+  RefCount: number
+  Size: number
+  InUse: boolean
+}
+
+export interface VolumePruneResult {
+  VolumesDeleted: string[]
+  SpaceReclaimed: number
+}
+
+// Same "explicit nodeId, no switcher fallback" convention as listContainers
+// — the Volumes section fetches every node explicitly, one call per node.
+export function listVolumes(nodeId?: string): Promise<DockerVolume[]> {
+  return get('/docker/volumes', nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+export function removeVolume(name: string, nodeId?: string): Promise<void> {
+  return del(`/docker/volumes/${encodeURIComponent(name)}`, nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+export function pruneVolumes(nodeId?: string): Promise<VolumePruneResult> {
+  return post('/docker/volumes/prune', undefined, nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
 // ── System stats (Resource Monitoring page) ───────────────────────────────
 export interface SystemStats {
   cpu_percent: number

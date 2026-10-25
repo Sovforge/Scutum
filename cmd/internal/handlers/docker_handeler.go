@@ -19,27 +19,19 @@ import (
 	"scutum/cmd/internal/utils"
 )
 
+// dockerGroupStore is the minimal group-membership lookup both the
+// group-targeted image and volume endpoints need. Set via SetGroupStore
+// rather than added to the constructor, so existing NewDockerHandler(ns,
+// secrets) call sites (main.go and several tests) don't need to change.
+type dockerGroupStore interface {
+	ListNodesInGroup(ctx context.Context, groupID string) ([]store.NodeRecord, error)
+}
+
 type DockerHandler struct {
 	client     *clients.DockerClient
 	nodeStore  nodeProxyStore
 	secrets    secretsValueStore
-	groupStore imageGroupStore
-}
-
-// imageGroupStore is the minimal group-membership lookup image group
-// operations need. Optional — set via SetGroupStore, mirroring
-// WireGuardHandler's SetPeerStore/SetEndpointStore pattern, so the
-// constructor signature (already called from both main.go and tests)
-// doesn't need to change.
-type imageGroupStore interface {
-	ListNodesInGroup(ctx context.Context, groupID string) ([]store.NodeRecord, error)
-}
-
-// SetGroupStore enables the group-targeted image endpoints (pull/list across
-// every node in a group). Group routes 500 with a clear message if this was
-// never set.
-func (h *DockerHandler) SetGroupStore(gs imageGroupStore) {
-	h.groupStore = gs
+	groupStore dockerGroupStore
 }
 
 func NewDockerHandler(ns nodeProxyStore, secrets secretsValueStore) *DockerHandler {
@@ -48,6 +40,21 @@ func NewDockerHandler(ns nodeProxyStore, secrets secretsValueStore) *DockerHandl
 		nodeStore: ns,
 		secrets:   secrets,
 	}
+}
+
+// SetGroupStore enables the group-targeted image and volume endpoints (list
+// across every node in a group). Those routes 500 with a clear message if
+// this was never called.
+func (h *DockerHandler) SetGroupStore(gs dockerGroupStore) {
+	h.groupStore = gs
+}
+
+// SetClient overrides the Docker client NewDockerHandler otherwise builds
+// via utils.GetPlatformClient(). Exported for tests, which need to point the
+// handler at a fake Docker daemon (httptest.Server) instead of a real
+// socket; production code never needs to call this.
+func (h *DockerHandler) SetClient(c *clients.DockerClient) {
+	h.client = c
 }
 
 // PostDeploy handles the deployment of a new container based on the user's request.
