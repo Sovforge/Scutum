@@ -232,6 +232,40 @@ CREATE TABLE IF NOT EXISTS app_secrets (
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS gitops_sources (
+    id                    VARCHAR(255) PRIMARY KEY,
+    name                  VARCHAR(255) NOT NULL,
+    repo_url              TEXT NOT NULL,
+    branch                VARCHAR(255) NOT NULL DEFAULT 'main',
+    path                  VARCHAR(1024) NOT NULL DEFAULT '',
+    manifest_type         VARCHAR(20) NOT NULL DEFAULT 'compose',
+    target_node_id        VARCHAR(255) NOT NULL DEFAULT '',
+    username              VARCHAR(255) NOT NULL DEFAULT '',
+    poll_interval_seconds INT NOT NULL DEFAULT 60,
+    enabled               TINYINT NOT NULL DEFAULT 1,
+    last_synced_at        TIMESTAMP NULL,
+    last_commit_sha       VARCHAR(64) NOT NULL DEFAULT '',
+    last_content_hash     VARCHAR(64) NOT NULL DEFAULT '',
+    last_status           VARCHAR(20) NOT NULL DEFAULT '',
+    last_error            TEXT NOT NULL DEFAULT '',
+    created_by            VARCHAR(255) NOT NULL DEFAULT '',
+    created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by            VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS gitops_sync_events (
+    id           VARCHAR(255) PRIMARY KEY,
+    source_id    VARCHAR(255) NOT NULL,
+    commit_sha   VARCHAR(64) NOT NULL DEFAULT '',
+    status       VARCHAR(20) NOT NULL,
+    message      TEXT NOT NULL DEFAULT '',
+    triggered_by VARCHAR(255) NOT NULL DEFAULT '',
+    started_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at  TIMESTAMP NULL,
+    CONSTRAINT fk_gitops_sync_source FOREIGN KEY (source_id) REFERENCES gitops_sources(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS setup_state (
     ` + "`key`" + `  VARCHAR(255) PRIMARY KEY,
     value VARCHAR(255) NOT NULL
@@ -360,6 +394,32 @@ CREATE TABLE IF NOT EXISTS node_group_members (
     group_id VARCHAR(36) NOT NULL,
     node_id  VARCHAR(36) NOT NULL,
     PRIMARY KEY (group_id, node_id)
+);
+
+CREATE TABLE IF NOT EXISTS network_policies (
+    id          VARCHAR(36) PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    enabled     TINYINT NOT NULL DEFAULT 1,
+    priority    INT NOT NULL DEFAULT 100,
+    action      VARCHAR(16) NOT NULL DEFAULT 'deny',
+    protocol    VARCHAR(16) NOT NULL DEFAULT 'any',
+    port        VARCHAR(32) NOT NULL DEFAULT '',
+    src_type    VARCHAR(16) NOT NULL DEFAULT 'any',
+    src_id      VARCHAR(36) NOT NULL DEFAULT '',
+    dst_type    VARCHAR(16) NOT NULL DEFAULT 'any',
+    dst_id      VARCHAR(36) NOT NULL DEFAULT '',
+    created_by  VARCHAR(255) NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by  VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS network_policy_settings (
+    id           TINYINT PRIMARY KEY,
+    default_deny TINYINT NOT NULL DEFAULT 0,
+    updated_by   VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS audit_forwarders (

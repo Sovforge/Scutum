@@ -222,6 +222,39 @@ CREATE TABLE IF NOT EXISTS app_secrets (
 	updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS gitops_sources (
+	id                    TEXT PRIMARY KEY,
+	name                  TEXT NOT NULL,
+	repo_url              TEXT NOT NULL,
+	branch                TEXT NOT NULL DEFAULT 'main',
+	path                  TEXT NOT NULL DEFAULT '',
+	manifest_type         TEXT NOT NULL DEFAULT 'compose',
+	target_node_id        TEXT NOT NULL DEFAULT '',
+	username              TEXT NOT NULL DEFAULT '',
+	poll_interval_seconds INTEGER NOT NULL DEFAULT 60,
+	enabled               INTEGER NOT NULL DEFAULT 1,
+	last_synced_at        TIMESTAMPTZ,
+	last_commit_sha       TEXT NOT NULL DEFAULT '',
+	last_content_hash     TEXT NOT NULL DEFAULT '',
+	last_status           TEXT NOT NULL DEFAULT '',
+	last_error            TEXT NOT NULL DEFAULT '',
+	created_by            TEXT NOT NULL DEFAULT '',
+	created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	updated_by            TEXT NOT NULL DEFAULT '',
+	updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS gitops_sync_events (
+	id           TEXT PRIMARY KEY,
+	source_id    TEXT NOT NULL REFERENCES gitops_sources(id) ON DELETE CASCADE,
+	commit_sha   TEXT NOT NULL DEFAULT '',
+	status       TEXT NOT NULL,
+	message      TEXT NOT NULL DEFAULT '',
+	triggered_by TEXT NOT NULL DEFAULT '',
+	started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	finished_at  TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS setup_state (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -349,6 +382,32 @@ CREATE TABLE IF NOT EXISTS node_group_members (
 	group_id TEXT NOT NULL REFERENCES node_groups(id) ON DELETE CASCADE,
 	node_id  TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
 	PRIMARY KEY (group_id, node_id)
+);
+
+CREATE TABLE IF NOT EXISTS network_policies (
+	id          TEXT PRIMARY KEY,
+	name        TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	enabled     INTEGER NOT NULL DEFAULT 1,
+	priority    INTEGER NOT NULL DEFAULT 100,
+	action      TEXT NOT NULL DEFAULT 'deny',
+	protocol    TEXT NOT NULL DEFAULT 'any',
+	port        TEXT NOT NULL DEFAULT '',
+	src_type    TEXT NOT NULL DEFAULT 'any',
+	src_id      TEXT NOT NULL DEFAULT '',
+	dst_type    TEXT NOT NULL DEFAULT 'any',
+	dst_id      TEXT NOT NULL DEFAULT '',
+	created_by  TEXT NOT NULL DEFAULT '',
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	updated_by  TEXT NOT NULL DEFAULT '',
+	updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS network_policy_settings (
+	id           INTEGER PRIMARY KEY CHECK (id = 1),
+	default_deny INTEGER NOT NULL DEFAULT 0,
+	updated_by   TEXT NOT NULL DEFAULT '',
+	updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS audit_forwarders (

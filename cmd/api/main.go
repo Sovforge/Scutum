@@ -411,6 +411,7 @@ func main() {
 	secretsVaultCtrl := handlers.NewSecretsVaultHandler(db)
 	settingsCtrl := handlers.NewSettingsHandler(db)
 	gitCtrl := handlers.NewGitHandler()
+	gitopsCtrl := handlers.NewGitOpsHandler(db, dataDir, jwtSecret, dockerCtrl, kubernetesCtrl)
 	s3Ctrl := handlers.NewS3Handler()
 	storageCtrl := handlers.NewStorageHandler(db)
 	wgService := &wireguard.CLIService{}
@@ -422,6 +423,7 @@ func main() {
 	authCtrl := handlers.NewAuthHandler(db, jwtSecret)
 	nodeCtrl := handlers.NewNodeHandler(db)
 	filesCtrl := handlers.NewFilesHandler(db, dataDir)
+	networkPolicyCtrl := handlers.NewNetworkPolicyHandler(db, "wg0")
 	userCtrl := handlers.NewUserHandler(db)
 	roleCtrl := handlers.NewRoleHandler(db)
 	obsCtrl := handlers.NewObservabilityHandler(db, db)
@@ -579,6 +581,19 @@ func main() {
 	// Git
 	apiMux.Handle("POST /git/sync", require("git", "write", gitCtrl.HandleGitSync))
 
+	// GitOps — CRUD is normally authenticated; the sync trigger is
+	// deliberately NOT wrapped in require() because it must also accept an
+	// unauthenticated-but-HMAC-signed push webhook from a real git host
+	// (GitHub-style X-Hub-Signature-256). It resolves auth itself: either a
+	// valid webhook signature for that source, or a normal Bearer/API-Key
+	// with gitops:write — see GitOpsHandler.authorizeSync.
+	apiMux.Handle("GET /gitops/sources", require("gitops", "read", gitopsCtrl.HandleList))
+	apiMux.Handle("POST /gitops/sources", require("gitops", "write", gitopsCtrl.HandleCreate))
+	apiMux.Handle("PUT /gitops/sources/{id}", require("gitops", "write", gitopsCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /gitops/sources/{id}", require("gitops", "admin", gitopsCtrl.HandleDelete))
+	apiMux.Handle("GET /gitops/sources/{id}/events", require("gitops", "read", gitopsCtrl.HandleListEvents))
+	apiMux.HandleFunc("POST /gitops/sources/{id}/sync", gitopsCtrl.HandleSync)
+
 	// S3 / Storage
 	apiMux.Handle("POST /storage/s3/upload", require("storage", "write", s3Ctrl.HandleUpload))
 	apiMux.Handle("POST /storage/s3/download", require("storage", "read", s3Ctrl.HandleDownload))
@@ -604,6 +619,20 @@ func main() {
 	apiMux.Handle("GET /network/mesh-summary", require("wireguard", "read", wgCtrl.HandleMeshSummary))
 	apiMux.Handle("GET /network/peers", require("wireguard", "read", wgCtrl.HandlePeerStatus))
 	apiMux.Handle("GET /network/hub-key", require("admin", "admin", wgCtrl.HandleGetHubKey))
+
+	// Network policy — rules are applied in a dedicated iptables chain
+	// hooked only off the WireGuard interface's own forwarded traffic (see
+	// cmd/internal/netpolicy), never INPUT/OUTPUT, so a bad policy can't
+	// lock out the hub's own management access.
+	apiMux.Handle("GET /network/policies", require("network", "read", networkPolicyCtrl.HandleList))
+	apiMux.Handle("POST /network/policies", require("network", "write", networkPolicyCtrl.HandleCreate))
+	apiMux.Handle("PUT /network/policies/{id}", require("network", "write", networkPolicyCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /network/policies/{id}", require("network", "admin", networkPolicyCtrl.HandleDelete))
+	apiMux.Handle("GET /network/policy-settings", require("network", "read", networkPolicyCtrl.HandleGetSettings))
+	apiMux.Handle("PUT /network/policy-settings", require("network", "admin", networkPolicyCtrl.HandleUpdateSettings))
+	// Relay target: the hub calls this on itself (in-process, via Reconcile)
+	// and, over the HMAC-signed hub-to-node channel, on every other node.
+	apiMux.Handle("POST /network/policy/apply", require("network", "write", networkPolicyCtrl.HandleApplyLocal))
 
 	// Plugin management
 	apiMux.Handle("POST /plugins/load", require("plugins", "admin", pluginCtrl.HandleLoad))
@@ -729,6 +758,47 @@ func main() {
 
 	// Alert evaluator
 	go alerts.NewEvaluator(db, dispatcher).Start(ctx)
+
+	// Network policy reconciler: recomputes the full iptables rule set from
+	// the current policies every minute (same cadence as the alert
+	// evaluator) and reapplies it locally + pushes it to every node, in
+	// case something external flushed the chain or a node was offline
+	// during the last change. Policy CRUD also triggers an immediate
+	// out-of-band reconcile (see network_policy_handler.go) so changes
+	// don't wait for the next tick.
+	go func() {
+		handlers.Reconcile(ctx, db, "wg0")
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				handlers.Reconcile(ctx, db, "wg0")
+			}
+		}
+	}()
+
+	// GitOps reconciler: each source has its own poll interval, so rather
+	// than one goroutine per source this runs a single fast ticker and asks
+	// the handler which sources are actually due (last_synced_at + their
+	// own poll_interval_seconds) each time. Manual/webhook syncs also call
+	// straight into the same sync path out-of-band (see gitops_handler.go)
+	// so they don't wait for this tick.
+	go func() {
+		gitopsCtrl.ReconcileDue(ctx)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				gitopsCtrl.ReconcileDue(ctx)
+			}
+		}
+	}()
 
 	// Certificates: inventory/rotation API, plus a daily expiry check that
 	// fires a webhook once a cert is within certExpiryWarnDays of NotAfter.
