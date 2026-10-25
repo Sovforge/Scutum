@@ -61,6 +61,10 @@ var defaultPermissions = []struct {
 	{"perm_secrets_read", "secrets:read", "secrets", "read"},
 	{"perm_secrets_write", "secrets:write", "secrets", "write"},
 	{"perm_secrets_admin", "secrets:admin", "secrets", "admin"},
+	// Network policy (mesh firewall rules)
+	{"perm_network_read", "network:read", "network", "read"},
+	{"perm_network_write", "network:write", "network", "write"},
+	{"perm_network_admin", "network:admin", "network", "admin"},
 	// GitOps (git-driven workload sources)
 	{"perm_gitops_read", "gitops:read", "gitops", "read"},
 	{"perm_gitops_write", "gitops:write", "gitops", "write"},
@@ -80,6 +84,7 @@ var rolePermissions = map[string][]string{
 		"perm_sync_read", "perm_sync_write", "perm_sync_admin",
 		"perm_admin_read", "perm_admin_write", "perm_admin_admin",
 		"perm_secrets_read", "perm_secrets_write", "perm_secrets_admin",
+		"perm_network_read", "perm_network_write", "perm_network_admin",
 		"perm_gitops_read", "perm_gitops_write", "perm_gitops_admin",
 	},
 	"role_operator": {
@@ -92,6 +97,7 @@ var rolePermissions = map[string][]string{
 		"perm_plugins_read",
 		"perm_sync_read", "perm_sync_write",
 		"perm_secrets_read", "perm_secrets_write",
+		"perm_network_read", "perm_network_write",
 		"perm_gitops_read", "perm_gitops_write",
 	},
 	"role_viewer": {
@@ -105,6 +111,7 @@ var rolePermissions = map[string][]string{
 		"perm_sync_read",
 		"perm_admin_read",
 		"perm_secrets_read",
+		"perm_network_read",
 		"perm_gitops_read",
 	},
 }
