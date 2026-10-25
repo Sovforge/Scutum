@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -88,11 +89,17 @@ func FromConfig(ctx context.Context, cfg Config) (Provider, error) {
 }
 
 // LoadConfig reads and parses a TOML KMS config file.
-// If the file does not exist, returns a default local config.
+// If the file does not exist, returns a default local config whose key file
+// lives next to where the config file would have been (i.e. under the
+// caller's secrets directory) — not FromConfig's own hardcoded
+// /run/secrets/master.key fallback, which only exists for when Local.KeyFile
+// is left blank by an explicit (not missing) config file.
 func LoadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return Config{Provider: "local"}, nil
+		cfg := Config{Provider: "local"}
+		cfg.Local.KeyFile = filepath.Join(filepath.Dir(path), "master.key")
+		return cfg, nil
 	}
 	if err != nil {
 		return Config{}, fmt.Errorf("read kms config: %w", err)
