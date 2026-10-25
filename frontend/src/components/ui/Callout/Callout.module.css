@@ -1,0 +1,52 @@
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  margin-bottom: 1.1rem;
+}
+.callout strong {
+  color: var(--paper);
+}
+.callout svg {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.info {
+  background: var(--ink);
+  color: var(--paper-faint);
+}
+.info svg {
+  color: var(--blueprint-bright);
+}
+
+.warning {
+  background: color-mix(in srgb, var(--rust) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rust) 25%, transparent);
+  color: var(--paper-faint);
+}
+.warning svg {
+  color: var(--rust-bright);
+}
+
+.danger {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--danger);
+}
+.danger svg {
+  color: var(--danger);
+}
+
+.success {
+  background: color-mix(in srgb, var(--blueprint) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--blueprint) 35%, transparent);
+  color: var(--paper);
+}
+.success svg {
+  color: var(--blueprint-bright);
+}

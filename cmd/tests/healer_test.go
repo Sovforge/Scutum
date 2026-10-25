@@ -90,3 +90,59 @@ func TestHealerServices(t *testing.T) {
 		t.Error("expected service restart")
 	}
 }
+
+func TestHealerDNSEndpoints(t *testing.T) {
+	cfg := sync.HealerConfig{
+		Interval:        50 * time.Millisecond,
+		HandshakeMaxAge: 1 * time.Second,
+	}
+
+	t.Run("stale DNS peer rate limits re-adds", func(t *testing.T) {
+		checker := &mockWGChecker{age: 5 * time.Minute}
+		h := sync.NewHealer(cfg, checker)
+		h.AddPeer(sync.WGPeer{
+			IfaceName: "wg0",
+			PublicKey: "dns=",
+			Endpoint:  "hub.example.com:51820",
+			FreshEndpoint: func(ctx context.Context) (string, error) {
+				return "hub.example.com:51820", nil
+			},
+		})
+		h.Start(context.Background())
+		time.Sleep(180 * time.Millisecond)
+		h.Stop()
+		// Should re-add exactly once (the initial run where lastEP is empty),
+		// then rate-limit subsequent stale check rounds.
+		if checker.reAdds != 1 {
+			t.Errorf("expected exactly 1 re-add for stale DNS peer (due to 5m rate limit), got %d", checker.reAdds)
+		}
+	})
+
+	t.Run("stale DNS peer re-adds if endpoint changes", func(t *testing.T) {
+		checker := &mockWGChecker{age: 5 * time.Minute}
+		h := sync.NewHealer(cfg, checker)
+		counter := 0
+		h.AddPeer(sync.WGPeer{
+			IfaceName: "wg0",
+			PublicKey: "dns2=",
+			Endpoint:  "hub1.example.com:51820",
+			FreshEndpoint: func(ctx context.Context) (string, error) {
+				counter++
+				if counter%2 == 1 {
+					return "hub1.example.com:51820", nil
+				}
+				return "hub2.example.com:51820", nil
+			},
+		})
+		h.Start(context.Background())
+		time.Sleep(180 * time.Millisecond)
+		h.Stop()
+		// Initial run (1) -> "hub1" (re-adds)
+		// Second run (2) -> "hub2" (changed, re-adds)
+		// Third run (3) -> "hub1" (changed, re-adds)
+		// Should be at least 2 or 3 re-adds.
+		if checker.reAdds < 2 {
+			t.Errorf("expected at least 2 re-adds when DNS endpoint changes, got %d", checker.reAdds)
+		}
+	})
+}

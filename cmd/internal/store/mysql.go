@@ -44,6 +44,59 @@ func (d MySQLDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN trace_id VARCHAR(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN span_id VARCHAR(32) NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN attributes JSON`,
+		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN disabled TINYINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN email VARCHAR(255)`,
+		`ALTER TABLE nodes ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'approved'`,
+		// alert tables
+		`CREATE TABLE IF NOT EXISTS alert_rules (
+			id             VARCHAR(255) PRIMARY KEY,
+			name           VARCHAR(255) NOT NULL,
+			condition      VARCHAR(50) NOT NULL,
+			threshold      DOUBLE NOT NULL DEFAULT 0,
+			severity       VARCHAR(20) NOT NULL DEFAULT 'warning',
+			enabled        TINYINT NOT NULL DEFAULT 1,
+			silenced_until TIMESTAMP NULL,
+			created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS alert_events (
+			id              VARCHAR(255) PRIMARY KEY,
+			rule_id         VARCHAR(255) NOT NULL,
+			rule_name       VARCHAR(255) NOT NULL,
+			severity        VARCHAR(20) NOT NULL,
+			message         TEXT NOT NULL,
+			fired_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			resolved_at     TIMESTAMP NULL,
+			acknowledged_at TIMESTAMP NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS file_transfers (
+			id               VARCHAR(255) PRIMARY KEY,
+			target_type      VARCHAR(20) NOT NULL,
+			target_id        VARCHAR(255) NOT NULL,
+			node_id          VARCHAR(255) NOT NULL,
+			node_name        VARCHAR(255) NOT NULL,
+			filename         VARCHAR(255) NOT NULL,
+			destination_path VARCHAR(1024) NOT NULL,
+			permissions      VARCHAR(10) NOT NULL DEFAULT '0644',
+			size_bytes       BIGINT NOT NULL DEFAULT 0,
+			status           VARCHAR(20) NOT NULL DEFAULT 'pending',
+			error            TEXT,
+			created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			completed_at     TIMESTAMP NULL
+		)`,
+		// node_stats table
+		`CREATE TABLE IF NOT EXISTS node_stats (
+			id           VARCHAR(255) PRIMARY KEY,
+			cpu_percent  DOUBLE NOT NULL DEFAULT 0,
+			mem_used     BIGINT NOT NULL DEFAULT 0,
+			mem_total    BIGINT NOT NULL DEFAULT 0,
+			disk_used    BIGINT NOT NULL DEFAULT 0,
+			disk_total   BIGINT NOT NULL DEFAULT 0,
+			load_1       DOUBLE NOT NULL DEFAULT 0,
+			load_5       DOUBLE NOT NULL DEFAULT 0,
+			load_15      DOUBLE NOT NULL DEFAULT 0,
+			recorded_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
 		// otel_metrics table (MySQL runs one statement at a time)
 		`CREATE TABLE IF NOT EXISTS otel_metrics (
 			id         VARCHAR(255) PRIMARY KEY,
@@ -66,9 +119,10 @@ const mysqlSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
     id          VARCHAR(255) PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
-    type        ENUM('hub', 'remote', 'combined') NOT NULL,
+    type        ENUM('hub', 'remote') NOT NULL,
     address     VARCHAR(255) NOT NULL,
     public_key  TEXT NOT NULL,
+    status      VARCHAR(20) NOT NULL DEFAULT 'approved',
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -168,9 +222,66 @@ CREATE TABLE IF NOT EXISTS secrets (
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS app_secrets (
+    id          VARCHAR(255) PRIMARY KEY,
+    name        VARCHAR(512) NOT NULL UNIQUE,
+    description VARCHAR(1024) NOT NULL DEFAULT '',
+    created_by  VARCHAR(255) NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by  VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS gitops_sources (
+    id                    VARCHAR(255) PRIMARY KEY,
+    name                  VARCHAR(255) NOT NULL,
+    repo_url              TEXT NOT NULL,
+    branch                VARCHAR(255) NOT NULL DEFAULT 'main',
+    path                  VARCHAR(1024) NOT NULL DEFAULT '',
+    manifest_type         VARCHAR(20) NOT NULL DEFAULT 'compose',
+    target_node_id        VARCHAR(255) NOT NULL DEFAULT '',
+    username              VARCHAR(255) NOT NULL DEFAULT '',
+    poll_interval_seconds INT NOT NULL DEFAULT 60,
+    enabled               TINYINT NOT NULL DEFAULT 1,
+    last_synced_at        TIMESTAMP NULL,
+    last_commit_sha       VARCHAR(64) NOT NULL DEFAULT '',
+    last_content_hash     VARCHAR(64) NOT NULL DEFAULT '',
+    last_status           VARCHAR(20) NOT NULL DEFAULT '',
+    last_error            TEXT NOT NULL DEFAULT '',
+    created_by            VARCHAR(255) NOT NULL DEFAULT '',
+    created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by            VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS gitops_sync_events (
+    id           VARCHAR(255) PRIMARY KEY,
+    source_id    VARCHAR(255) NOT NULL,
+    commit_sha   VARCHAR(64) NOT NULL DEFAULT '',
+    status       VARCHAR(20) NOT NULL,
+    message      TEXT NOT NULL DEFAULT '',
+    triggered_by VARCHAR(255) NOT NULL DEFAULT '',
+    started_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at  TIMESTAMP NULL,
+    CONSTRAINT fk_gitops_sync_source FOREIGN KEY (source_id) REFERENCES gitops_sources(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS setup_state (
     ` + "`key`" + `  VARCHAR(255) PRIMARY KEY,
     value VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS system_settings (
+    id                       INT PRIMARY KEY CHECK (id = 1),
+    cluster_name             VARCHAR(255) NOT NULL DEFAULT '',
+    region                   VARCHAR(100) NOT NULL DEFAULT '',
+    log_level                VARCHAR(20) NOT NULL DEFAULT 'info',
+    mesh_mtu                 INT NOT NULL DEFAULT 1420,
+    mesh_keepalive_s         INT NOT NULL DEFAULT 25,
+    node_default_role        VARCHAR(20) NOT NULL DEFAULT 'remote',
+    node_require_approval    TINYINT(1) NOT NULL DEFAULT 0,
+    auth_require_mfa         TINYINT(1) NOT NULL DEFAULT 0,
+    auth_session_timeout_min INT NOT NULL DEFAULT 1440
 );
 
 CREATE TABLE IF NOT EXISTS storage_backends (
@@ -233,5 +344,101 @@ CREATE TABLE IF NOT EXISTS hub_leases (
     holder_id  VARCHAR(255) NOT NULL,
     expires_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS federation_peers (
+    id            VARCHAR(36) PRIMARY KEY,
+    name          VARCHAR(255) NOT NULL,
+    hub_url       TEXT NOT NULL,
+    wg_endpoint   VARCHAR(255) NOT NULL,
+    wg_public_key VARCHAR(255) NOT NULL,
+    mesh_cidr     VARCHAR(64) NOT NULL,
+    allowed_ips   TEXT NOT NULL DEFAULT '',
+    status        VARCHAR(32) NOT NULL DEFAULT 'pending',
+    last_seen     TIMESTAMP NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS node_labels (
+    node_id   VARCHAR(36) NOT NULL,
+    label_key VARCHAR(255) NOT NULL,
+    value     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (node_id, label_key)
+);
+
+CREATE TABLE IF NOT EXISTS node_groups (
+    id          VARCHAR(36) PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS webhook_configs (
+    id         VARCHAR(36) PRIMARY KEY,
+    name       VARCHAR(255) NOT NULL,
+    url        TEXT NOT NULL,
+    secret     TEXT NOT NULL DEFAULT '',
+    events     TEXT NOT NULL DEFAULT '[]',
+    enabled    TINYINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scim_tokens (
+    id          VARCHAR(36) PRIMARY KEY,
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS node_group_members (
+    group_id VARCHAR(36) NOT NULL,
+    node_id  VARCHAR(36) NOT NULL,
+    PRIMARY KEY (group_id, node_id)
+);
+
+CREATE TABLE IF NOT EXISTS network_policies (
+    id          VARCHAR(36) PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    enabled     TINYINT NOT NULL DEFAULT 1,
+    priority    INT NOT NULL DEFAULT 100,
+    action      VARCHAR(16) NOT NULL DEFAULT 'deny',
+    protocol    VARCHAR(16) NOT NULL DEFAULT 'any',
+    port        VARCHAR(32) NOT NULL DEFAULT '',
+    src_type    VARCHAR(16) NOT NULL DEFAULT 'any',
+    src_id      VARCHAR(36) NOT NULL DEFAULT '',
+    dst_type    VARCHAR(16) NOT NULL DEFAULT 'any',
+    dst_id      VARCHAR(36) NOT NULL DEFAULT '',
+    created_by  VARCHAR(255) NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by  VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS network_policy_settings (
+    id           TINYINT PRIMARY KEY,
+    default_deny TINYINT NOT NULL DEFAULT 0,
+    updated_by   VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS audit_forwarders (
+    id         VARCHAR(36) PRIMARY KEY,
+    name       VARCHAR(255) NOT NULL,
+    url        TEXT NOT NULL,
+    format     VARCHAR(16) NOT NULL DEFAULT 'json',
+    enabled    TINYINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sso_identities (
+    id         VARCHAR(255) PRIMARY KEY,
+    user_id    VARCHAR(255) NOT NULL,
+    provider   VARCHAR(100) NOT NULL,
+    subject    VARCHAR(255) NOT NULL,
+    email      VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(provider, subject),
+    CONSTRAINT fk_sso_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
 `

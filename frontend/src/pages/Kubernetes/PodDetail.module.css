@@ -1,0 +1,202 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--paper-dim);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.backLink:hover {
+  color: var(--paper);
+}
+
+/* ── Report header ──────────────────────────────────────────────── */
+
+.reportHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reportTitle {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  flex-wrap: wrap;
+}
+
+/* ── Info grid ──────────────────────────────────────────────────── */
+
+/* Stretch (grid default) so the three cards share one height instead of
+   each shrinking to its own content. */
+.infoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+.detailList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0.4rem 1.15rem 1.15rem;
+}
+.detailList > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--ink-line);
+  font-size: 0.85rem;
+}
+.detailList > div:last-child {
+  border-bottom: none;
+}
+.detailList dt {
+  color: var(--paper-dim);
+  flex-shrink: 0;
+}
+.detailList dd {
+  margin: 0;
+  color: var(--paper);
+  text-align: right;
+  word-break: break-all;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.conditionReason {
+  font-size: 0.72rem;
+  color: var(--paper-dim);
+}
+
+/* ── Labels ─────────────────────────────────────────────────────── */
+
+.labelList {
+  margin: 0;
+  padding: 0.5rem 1.15rem 1.15rem;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.labelList li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.labelKey {
+  color: var(--paper-dim);
+}
+.labelVal {
+  color: var(--paper);
+  text-align: right;
+  word-break: break-all;
+}
+
+/* ── Containers table extras ────────────────────────────────────── */
+
+.row {
+  cursor: pointer;
+}
+.nameActive {
+  color: var(--rust-bright) !important;
+  font-weight: 600;
+}
+
+.readyDot,
+.notReadyDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.readyDot {
+  background: var(--blueprint-bright);
+}
+.notReadyDot {
+  background: var(--ink-line-strong);
+}
+
+/* ── Logs ───────────────────────────────────────────────────────── */
+
+.calloutWrap {
+  margin: 1rem 1.15rem 0;
+}
+
+.logActions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.logActions > :global(.field) {
+  margin-bottom: 0;
+}
+
+.refreshBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--paper-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+}
+.refreshBtn:hover {
+  color: var(--paper);
+  background: color-mix(in srgb, var(--paper) 8%, transparent);
+}
+.refreshBtn:active {
+  transform: rotate(90deg);
+}
+
+.logList {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+.logRow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.85rem;
+  padding: 0.55rem 1.15rem;
+  border-bottom: 1px solid var(--ink-line);
+}
+.logRow:last-child {
+  border-bottom: none;
+}
+.logTime {
+  color: var(--paper-dim);
+  flex-shrink: 0;
+}
+.logMsg {
+  color: var(--paper-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

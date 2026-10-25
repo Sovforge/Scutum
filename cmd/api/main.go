@@ -2,16 +2,12 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"embed"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,14 +26,20 @@ import (
 
 	"golang.org/x/time/rate"
 
+	scutumacme "scutum/cmd/internal/acme"
+	"scutum/cmd/internal/alerts"
 	"scutum/cmd/internal/auth"
+	"scutum/cmd/internal/certs"
 	"scutum/cmd/internal/handlers"
 	"scutum/cmd/internal/kms"
 	"scutum/cmd/internal/metrics"
 	plugin "scutum/cmd/internal/plugins"
+	"scutum/cmd/internal/roaming"
 	"scutum/cmd/internal/store"
 	"scutum/cmd/internal/sync"
+	"scutum/cmd/internal/sysinfo"
 	"scutum/cmd/internal/utils"
+	"scutum/cmd/internal/webhooks"
 	"scutum/cmd/internal/wireguard"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -249,6 +251,35 @@ func main() {
 		logger.Info("mTLS enabled", "ca_file", caCertFile)
 	}
 
+	// --- Certificate inventory & in-place rotation (issue #29) ---
+	// Only meaningful for the manual CERT_FILE/KEY_FILE(/CA_CERT_FILE) path —
+	// ACME-issued certs already renew themselves automatically, and there's
+	// nothing to rotate when TLS is off entirely.
+	tlsMode := "none"
+	if scutumacme.FromEnv(secretsDir).Enabled() {
+		tlsMode = "acme"
+	} else if useTLS {
+		tlsMode = "manual"
+	}
+	var certStore *certs.Store
+	if tlsMode == "manual" {
+		certStore, err = certs.NewStore(certFile, keyFile, caCertFile)
+		if err != nil {
+			logger.Fatal("failed to initialize certificate store", "error", err)
+		}
+		// GetConfigForClient is checked fresh on every handshake, so a
+		// rotation via the API below takes effect for the very next
+		// connection — no restart, and no unsynchronized reads of the
+		// Certificates/ClientCAs fields this config would otherwise need.
+		tlsConfig.GetConfigForClient = certStore.GetConfigForClient
+	}
+	certExpiryWarnDays := 30
+	if v := os.Getenv("CERT_EXPIRY_WARN_DAYS"); v != "" {
+		if d, err := strconv.Atoi(v); err == nil && d > 0 {
+			certExpiryWarnDays = d
+		}
+	}
+
 	// meshTLSConfig is used for node-to-node HTTPS API calls (sync, proxy, endpoint
 	// registration). When no CA cert is configured (self-signed certs), skip server
 	// verification — security comes from WireGuard + HMAC signatures on each request.
@@ -296,13 +327,16 @@ func main() {
 		logger.Error("edge registration failed after all attempts")
 	}()
 
-	// For edge (remote/combined) installs: push our current WireGuard endpoint to
+	// For remote installs: push our current WireGuard endpoint to
 	// the hub on startup so the hub's wg_peers table stays accurate even when our
 	// public IP or NAT mapping has changed since initial setup.
 	go registerOwnEndpoint(ctx, db, logger, meshTLSConfig)
 
 	// Start rate-limiter cleanup to prevent memory growth
 	go cleanupVisitors(ctx)
+
+	// OTel span export — forward internal spans to an external OTLP collector when configured
+	utils.StartOTLPExporter(ctx, os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 
 	// Background log cleanup (runs every 24h)
 	go func() {
@@ -352,10 +386,32 @@ func main() {
 		return authMW(auth.Require(db, resource, action)(http.HandlerFunc(h)))
 	}
 
+	// requireDocker wraps require() and additionally checks that the Docker
+	// socket is present before the handler runs. Without this, missing-socket
+	// errors surface as confusing 500s instead of a clear feature-unavailable
+	// message — most relevant when running in Kubernetes without docker.enabled.
+	requireDocker := func(resource, action string, h http.HandlerFunc) http.Handler {
+		return require(resource, action, func(w http.ResponseWriter, r *http.Request) {
+			if !utils.IsDockerAvailable() {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Docker is not available on this node (socket not mounted)",
+				})
+				return
+			}
+			h(w, r)
+		})
+	}
+
 	// --- Handlers ---
-	dockerCtrl := handlers.NewDockerHandler(db)
-	kubernetesCtrl := handlers.NewKubernetesHandler(db)
+	dockerCtrl := handlers.NewDockerHandler(db, db)
+	dockerCtrl.SetGroupStore(db)
+	kubernetesCtrl := handlers.NewKubernetesHandler(db, db)
+	secretsVaultCtrl := handlers.NewSecretsVaultHandler(db)
+	settingsCtrl := handlers.NewSettingsHandler(db)
 	gitCtrl := handlers.NewGitHandler()
+	gitopsCtrl := handlers.NewGitOpsHandler(db, dataDir, jwtSecret, dockerCtrl, kubernetesCtrl)
 	s3Ctrl := handlers.NewS3Handler()
 	storageCtrl := handlers.NewStorageHandler(db)
 	wgService := &wireguard.CLIService{}
@@ -366,11 +422,23 @@ func main() {
 	pluginCtrl := handlers.NewPluginHandler(pluginRuntime, registrar)
 	authCtrl := handlers.NewAuthHandler(db, jwtSecret)
 	nodeCtrl := handlers.NewNodeHandler(db)
+	filesCtrl := handlers.NewFilesHandler(db, dataDir)
+	networkPolicyCtrl := handlers.NewNetworkPolicyHandler(db, "wg0")
 	userCtrl := handlers.NewUserHandler(db)
 	roleCtrl := handlers.NewRoleHandler(db)
 	obsCtrl := handlers.NewObservabilityHandler(db, db)
 	otelCtrl := handlers.NewOTelHandler(db, db)
 	exportCtrl := handlers.NewExportHandler(db)
+	operatorCtrl := handlers.NewOperatorHandler(db)
+	federationCtrl := handlers.NewFederationHandler(db)
+	nodeGroupsCtrl := handlers.NewNodeGroupsHandler(db)
+	complianceCtrl := handlers.NewComplianceHandler(db, "1.1.0")
+	webhookCtrl := handlers.NewWebhookHandler(db)
+	scimCtrl := handlers.NewSCIMHandler(db)
+	auditFwdCtrl := handlers.NewAuditForwarderHandler(db)
+	dispatcher := webhooks.NewDispatcher(db)
+	dispatcher.Start(ctx)
+	go handlers.RunForwarder(ctx, db)
 	utils.SetObsSink(db)
 	setupCtrl := handlers.NewSetupHandler(db, filepath.Join(secretsDir, "kms.toml"), func(newProvider kms.Provider) {
 		// All secrets written during setup (wg0_config, sync_hmac_key, hub_hmac_key,
@@ -392,11 +460,11 @@ func main() {
 	// Auth (public)
 	apiMux.Handle("POST /auth/register", rateLimitMW(http.HandlerFunc(authCtrl.HandleRegister)))
 	apiMux.Handle("POST /auth/login", rateLimitMW(http.HandlerFunc(authCtrl.HandleLogin)))
-	apiMux.Handle("POST /auth/keys", rateLimitMW(http.HandlerFunc(authCtrl.HandleCreateAPIKey)))
 	apiMux.Handle("POST /auth/forgot-password", rateLimitMW(http.HandlerFunc(authCtrl.HandleForgotPassword)))
 
 	// Auth (authenticated)
 	apiMux.Handle("GET /auth/me", authMW(http.HandlerFunc(userCtrl.HandleMe)))
+	apiMux.Handle("POST /auth/keys", authMW(rateLimitMW(http.HandlerFunc(authCtrl.HandleCreateAPIKey))))
 	apiMux.Handle("GET /auth/tokens", authMW(http.HandlerFunc(userCtrl.HandleListTokens)))
 	apiMux.Handle("DELETE /auth/tokens/{id}", authMW(http.HandlerFunc(userCtrl.HandleDeleteToken)))
 
@@ -409,6 +477,12 @@ func main() {
 	apiMux.Handle("POST /auth/mfa/setup", authMW(http.HandlerFunc(authCtrl.HandleMFASetup)))
 	apiMux.Handle("POST /auth/mfa/enable", authMW(http.HandlerFunc(authCtrl.HandleMFAEnable)))
 	apiMux.Handle("POST /auth/mfa/disable", authMW(http.HandlerFunc(authCtrl.HandleMFADisable)))
+
+	// SSO (public routes — no auth required before login)
+	ssoCtrl := handlers.NewSSOHandler(db, jwtSecret)
+	apiMux.HandleFunc("GET /auth/sso/providers", ssoCtrl.HandleProviders)
+	apiMux.HandleFunc("GET /auth/sso/{provider}", ssoCtrl.HandleLogin)
+	apiMux.HandleFunc("GET /auth/sso/{provider}/callback", ssoCtrl.HandleCallback)
 
 	// Health + version (public)
 	apiMux.HandleFunc("GET /health", handlers.HealthHandler)
@@ -425,6 +499,21 @@ func main() {
 	apiMux.Handle("GET /nodes/{id}", require("nodes", "read", nodeCtrl.HandleGet))
 	apiMux.Handle("POST /nodes", require("nodes", "write", nodeCtrl.HandleCreate))
 	apiMux.Handle("DELETE /nodes/{id}", require("nodes", "admin", nodeCtrl.HandleDelete))
+	apiMux.Handle("POST /nodes/{id}/approve", require("nodes", "admin", nodeCtrl.HandleApprove))
+	apiMux.Handle("POST /nodes/{id}/reject", require("nodes", "admin", nodeCtrl.HandleReject))
+
+	// File distribution — push files to a node or a whole group over the same
+	// HMAC-authenticated hub-to-node channel Docker/Kubernetes actions use.
+	// /nodes/files/place is the endpoint every instance exposes locally (what
+	// actually writes to disk); /nodes/{id}/files and /groups/{id}/files are
+	// the hub-facing entry points that resolve a target and relay to it.
+	apiMux.Handle("POST /nodes/files/place", require("nodes", "write", filesCtrl.HandlePlace))
+	apiMux.Handle("POST /nodes/{id}/files", require("nodes", "write", filesCtrl.HandleDistributeToNode))
+	apiMux.Handle("GET /file-transfers", require("nodes", "read", filesCtrl.HandleListTransfers))
+
+	// System settings (Settings → General/Mesh/Nodes/Auth)
+	apiMux.Handle("GET /settings", require("admin", "admin", settingsCtrl.HandleGet))
+	apiMux.Handle("PUT /settings", require("admin", "admin", settingsCtrl.HandleUpdate))
 
 	// Users (admin)
 	apiMux.Handle("GET /users", require("admin", "admin", userCtrl.HandleList))
@@ -440,35 +529,78 @@ func main() {
 	apiMux.Handle("DELETE /roles/{id}", require("admin", "admin", roleCtrl.HandleDelete))
 
 	// Docker
-	apiMux.Handle("GET /docker/containers", require("docker", "read", dockerCtrl.HandleListContainers))
-	apiMux.Handle("POST /docker/deploy", require("docker", "write", dockerCtrl.PostDeploy))
-	apiMux.Handle("POST /docker/deploy-compose", require("docker", "write", dockerCtrl.HandleDeployCompose))
-	apiMux.Handle("GET /docker/containers/{id}", require("docker", "read", dockerCtrl.HandleInspect))
-	apiMux.Handle("GET /docker/containers/{id}/logs-json", require("docker", "read", dockerCtrl.HandleLogsJSON))
-	apiMux.Handle("POST /docker/containers/{id}/start", require("docker", "write", dockerCtrl.HandleStart))
-	apiMux.Handle("POST /docker/containers/{id}/stop", require("docker", "write", dockerCtrl.HandleStop))
-	apiMux.Handle("POST /docker/containers/{id}/restart", require("docker", "write", dockerCtrl.HandleRestart))
-	apiMux.Handle("DELETE /docker/containers/{id}", require("docker", "delete", dockerCtrl.HandleDelete))
-	apiMux.Handle("GET /docker/containers/{id}/stats", require("docker", "read", dockerCtrl.HandleStats))
-	apiMux.Handle("GET /docker/containers/{id}/stats-snapshot", require("docker", "read", dockerCtrl.HandleStatsSnapshot))
-	apiMux.Handle("GET /docker/containers/{id}/logs", require("docker", "read", dockerCtrl.HandleLogs))
-	apiMux.Handle("GET /docker/containers/{id}/terminal", require("docker", "write", dockerCtrl.HandleTerminal))
+	apiMux.Handle("GET /docker/containers", requireDocker("docker", "read", dockerCtrl.HandleListContainers))
+	apiMux.Handle("POST /docker/deploy", requireDocker("docker", "write", dockerCtrl.PostDeploy))
+	apiMux.Handle("POST /docker/deploy-compose", requireDocker("docker", "write", dockerCtrl.HandleDeployCompose))
+	apiMux.Handle("GET /docker/containers/{id}", requireDocker("docker", "read", dockerCtrl.HandleInspect))
+	apiMux.Handle("GET /docker/containers/{id}/logs-json", requireDocker("docker", "read", dockerCtrl.HandleLogsJSON))
+	apiMux.Handle("POST /docker/containers/{id}/start", requireDocker("docker", "write", dockerCtrl.HandleStart))
+	apiMux.Handle("POST /docker/containers/{id}/stop", requireDocker("docker", "write", dockerCtrl.HandleStop))
+	apiMux.Handle("POST /docker/containers/{id}/restart", requireDocker("docker", "write", dockerCtrl.HandleRestart))
+	apiMux.Handle("DELETE /docker/containers/{id}", requireDocker("docker", "admin", dockerCtrl.HandleDelete))
+	apiMux.Handle("GET /docker/containers/{id}/stats", requireDocker("docker", "read", dockerCtrl.HandleStats))
+	apiMux.Handle("GET /docker/containers/{id}/stats-snapshot", requireDocker("docker", "read", dockerCtrl.HandleStatsSnapshot))
+	apiMux.Handle("GET /docker/containers/{id}/logs", requireDocker("docker", "read", dockerCtrl.HandleLogs))
+	apiMux.Handle("GET /docker/containers/{id}/terminal", requireDocker("docker", "write", dockerCtrl.HandleTerminal))
+	apiMux.Handle("GET /docker/volumes", requireDocker("docker", "read", dockerCtrl.HandleListVolumes))
+	apiMux.Handle("GET /docker/volumes/{name}", requireDocker("docker", "read", dockerCtrl.HandleInspectVolume))
+	apiMux.Handle("DELETE /docker/volumes/{name}", requireDocker("docker", "admin", dockerCtrl.HandleRemoveVolume))
+	apiMux.Handle("POST /docker/volumes/prune", requireDocker("docker", "admin", dockerCtrl.HandlePruneVolumes))
+	apiMux.Handle("GET /nodes/{id}/volumes", require("docker", "read", dockerCtrl.HandleListVolumesForNode))
+	apiMux.Handle("GET /nodes/{id}/volumes/{name}", require("docker", "read", dockerCtrl.HandleInspectVolumeForNode))
+	apiMux.Handle("DELETE /nodes/{id}/volumes/{name}", require("docker", "admin", dockerCtrl.HandleRemoveVolumeForNode))
+	apiMux.Handle("POST /nodes/{id}/volumes/prune", require("docker", "admin", dockerCtrl.HandlePruneVolumesForNode))
+
+	// Image management (#30) — local/X-Target-Node-proxied endpoints...
+	apiMux.Handle("GET /docker/images", requireDocker("docker", "read", dockerCtrl.HandleListImages))
+	apiMux.Handle("POST /docker/images/pull", requireDocker("docker", "write", dockerCtrl.HandlePullImage))
+	apiMux.Handle("DELETE /docker/images/{imageId}", requireDocker("docker", "admin", dockerCtrl.HandleRemoveImage))
+	apiMux.Handle("POST /docker/images/prune", requireDocker("docker", "admin", dockerCtrl.HandlePruneImages))
+	// ...and the same operations addressed by node ID in the path — the hub
+	// relays to the target node itself, so these aren't gated on the HUB
+	// having a local docker socket the way the routes above are.
+	apiMux.Handle("GET /nodes/{id}/images", require("docker", "read", dockerCtrl.HandleListImagesForNode))
+	apiMux.Handle("POST /nodes/{id}/images/pull", require("docker", "write", dockerCtrl.HandlePullImageForNode))
+	apiMux.Handle("DELETE /nodes/{id}/images/{imageId}", require("docker", "admin", dockerCtrl.HandleRemoveImageForNode))
+	apiMux.Handle("POST /nodes/{id}/images/prune", require("docker", "admin", dockerCtrl.HandlePruneImagesForNode))
+	// Group-targeted: the "image diff" view and fan-out pull.
+	apiMux.Handle("GET /groups/{id}/images", require("docker", "read", dockerCtrl.HandleListImagesForGroup))
+	apiMux.Handle("POST /groups/{id}/images/pull", require("docker", "write", dockerCtrl.HandlePullImageForGroup))
 
 	// Kubernetes
 	apiMux.Handle("GET /kubernetes/summary", require("kubernetes", "read", kubernetesCtrl.HandleK8sSummary))
 	apiMux.Handle("GET /kubernetes/pods", require("kubernetes", "read", kubernetesCtrl.HandleListAllPods))
+	apiMux.Handle("GET /kubernetes/deployments", require("kubernetes", "read", kubernetesCtrl.HandleListDeployments))
 	apiMux.Handle("GET /kubernetes/events", require("kubernetes", "read", kubernetesCtrl.HandleWatchEvents))
 	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}", require("kubernetes", "read", kubernetesCtrl.HandleGetPod))
 	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}/logs-json", require("kubernetes", "read", kubernetesCtrl.HandlePodLogsJSON))
-	apiMux.Handle("DELETE /kubernetes/{ns}/pods/{name}", require("kubernetes", "delete", kubernetesCtrl.HandleDeletePod))
+	apiMux.Handle("DELETE /kubernetes/{ns}/pods/{name}", require("kubernetes", "admin", kubernetesCtrl.HandleDeletePod))
 	apiMux.Handle("POST /kubernetes/apply", require("kubernetes", "write", kubernetesCtrl.HandleApplyYAML))
 	apiMux.Handle("POST /kubernetes/{ns}/deploy", require("kubernetes", "write", kubernetesCtrl.HandleDeploy))
 	apiMux.Handle("POST /kubernetes/{ns}/deployments/{name}/scale", require("kubernetes", "write", kubernetesCtrl.HandleScale))
 	apiMux.Handle("POST /kubernetes/{ns}/deployments/{name}/restart", require("kubernetes", "write", kubernetesCtrl.HandleRestart))
+	apiMux.Handle("GET /kubernetes/secrets", require("kubernetes", "read", kubernetesCtrl.HandleListSecrets))
+	apiMux.Handle("GET /kubernetes/{ns}/secrets/{name}", require("kubernetes", "read", kubernetesCtrl.HandleGetSecret))
+	apiMux.Handle("POST /kubernetes/{ns}/secrets", require("kubernetes", "write", kubernetesCtrl.HandleCreateSecret))
+	apiMux.Handle("DELETE /kubernetes/{ns}/secrets/{name}", require("kubernetes", "admin", kubernetesCtrl.HandleDeleteSecret))
+	apiMux.Handle("POST /kubernetes/{ns}/secrets/{name}/rotate", require("kubernetes", "write", kubernetesCtrl.HandleRotateSecret))
 	apiMux.Handle("GET /k8s/{namespace}/{pod}/terminal", require("kubernetes", "write", kubernetesCtrl.HandleTerminal))
 
 	// Git
 	apiMux.Handle("POST /git/sync", require("git", "write", gitCtrl.HandleGitSync))
+
+	// GitOps — CRUD is normally authenticated; the sync trigger is
+	// deliberately NOT wrapped in require() because it must also accept an
+	// unauthenticated-but-HMAC-signed push webhook from a real git host
+	// (GitHub-style X-Hub-Signature-256). It resolves auth itself: either a
+	// valid webhook signature for that source, or a normal Bearer/API-Key
+	// with gitops:write — see GitOpsHandler.authorizeSync.
+	apiMux.Handle("GET /gitops/sources", require("gitops", "read", gitopsCtrl.HandleList))
+	apiMux.Handle("POST /gitops/sources", require("gitops", "write", gitopsCtrl.HandleCreate))
+	apiMux.Handle("PUT /gitops/sources/{id}", require("gitops", "write", gitopsCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /gitops/sources/{id}", require("gitops", "admin", gitopsCtrl.HandleDelete))
+	apiMux.Handle("GET /gitops/sources/{id}/events", require("gitops", "read", gitopsCtrl.HandleListEvents))
+	apiMux.HandleFunc("POST /gitops/sources/{id}/sync", gitopsCtrl.HandleSync)
 
 	// S3 / Storage
 	apiMux.Handle("POST /storage/s3/upload", require("storage", "write", s3Ctrl.HandleUpload))
@@ -483,6 +615,11 @@ func main() {
 	apiMux.Handle("POST /storage/backends/{id}/test", require("storage", "read", storageCtrl.HandleTestBackend))
 	apiMux.Handle("GET /storage/backends/{id}/buckets", require("storage", "read", storageCtrl.HandleListBuckets))
 
+	apiMux.Handle("GET /secrets", require("secrets", "read", secretsVaultCtrl.HandleList))
+	apiMux.Handle("POST /secrets", require("secrets", "write", secretsVaultCtrl.HandleCreate))
+	apiMux.Handle("PUT /secrets/{name...}", require("secrets", "write", secretsVaultCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /secrets/{name...}", require("secrets", "admin", secretsVaultCtrl.HandleDelete))
+
 	// WireGuard
 	apiMux.Handle("POST /network/peer", require("wireguard", "write", wgCtrl.HandleAddPeer))
 	apiMux.Handle("POST /network/register-endpoint", require("wireguard", "write", wgCtrl.HandleRegisterEndpoint))
@@ -490,6 +627,20 @@ func main() {
 	apiMux.Handle("GET /network/mesh-summary", require("wireguard", "read", wgCtrl.HandleMeshSummary))
 	apiMux.Handle("GET /network/peers", require("wireguard", "read", wgCtrl.HandlePeerStatus))
 	apiMux.Handle("GET /network/hub-key", require("admin", "admin", wgCtrl.HandleGetHubKey))
+
+	// Network policy — rules are applied in a dedicated iptables chain
+	// hooked only off the WireGuard interface's own forwarded traffic (see
+	// cmd/internal/netpolicy), never INPUT/OUTPUT, so a bad policy can't
+	// lock out the hub's own management access.
+	apiMux.Handle("GET /network/policies", require("network", "read", networkPolicyCtrl.HandleList))
+	apiMux.Handle("POST /network/policies", require("network", "write", networkPolicyCtrl.HandleCreate))
+	apiMux.Handle("PUT /network/policies/{id}", require("network", "write", networkPolicyCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /network/policies/{id}", require("network", "admin", networkPolicyCtrl.HandleDelete))
+	apiMux.Handle("GET /network/policy-settings", require("network", "read", networkPolicyCtrl.HandleGetSettings))
+	apiMux.Handle("PUT /network/policy-settings", require("network", "admin", networkPolicyCtrl.HandleUpdateSettings))
+	// Relay target: the hub calls this on itself (in-process, via Reconcile)
+	// and, over the HMAC-signed hub-to-node channel, on every other node.
+	apiMux.Handle("POST /network/policy/apply", require("network", "write", networkPolicyCtrl.HandleApplyLocal))
 
 	// Plugin management
 	apiMux.Handle("POST /plugins/load", require("plugins", "admin", pluginCtrl.HandleLoad))
@@ -511,8 +662,8 @@ func main() {
 	apiMux.Handle("POST /otlp/v1/metrics", require("admin", "read", otelCtrl.HandleOTLPMetrics))
 
 	// Container / pod telemetry scraping
-	apiMux.Handle("GET /docker/containers/{id}/traces", require("docker", "read", dockerCtrl.HandleContainerTraces))
-	apiMux.Handle("GET /docker/containers/{id}/metrics-scrape", require("docker", "read", dockerCtrl.HandleContainerMetricsScrape))
+	apiMux.Handle("GET /docker/containers/{id}/traces", requireDocker("docker", "read", dockerCtrl.HandleContainerTraces))
+	apiMux.Handle("GET /docker/containers/{id}/metrics-scrape", requireDocker("docker", "read", dockerCtrl.HandleContainerMetricsScrape))
 	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}/traces", require("kubernetes", "read", kubernetesCtrl.HandlePodTraces))
 	apiMux.Handle("GET /kubernetes/{ns}/pods/{name}/metrics-scrape", require("kubernetes", "read", kubernetesCtrl.HandlePodMetricsScrape))
 
@@ -521,11 +672,210 @@ func main() {
 	apiMux.Handle("POST /sync/push", require("sync", "write", syncCtrl.HandlePush))
 	apiMux.Handle("POST /sync/register-edge", require("sync", "admin", syncCtrl.HandleRegisterEdge))
 
+	// Operator bootstrap (admin only — used by the Kubernetes operator)
+	apiMux.Handle("GET /operator/bootstrap", require("admin", "admin", operatorCtrl.HandleBootstrap))
+
+	// Hub federation (admin only)
+	apiMux.Handle("GET /federation/peers", require("admin", "admin", federationCtrl.HandleList))
+	apiMux.Handle("POST /federation/peers", require("admin", "admin", federationCtrl.HandleCreate))
+	apiMux.Handle("GET /federation/peers/{id}", require("admin", "admin", federationCtrl.HandleGet))
+	apiMux.Handle("DELETE /federation/peers/{id}", require("admin", "admin", federationCtrl.HandleDelete))
+
+	// Node groups and labels
+	apiMux.Handle("GET /nodes/{id}/labels", require("nodes", "read", nodeGroupsCtrl.HandleGetLabels))
+	apiMux.Handle("PUT /nodes/{id}/labels", require("nodes", "write", nodeGroupsCtrl.HandleSetLabels))
+	apiMux.Handle("GET /groups", require("nodes", "read", nodeGroupsCtrl.HandleListGroups))
+	apiMux.Handle("POST /groups", require("nodes", "write", nodeGroupsCtrl.HandleCreateGroup))
+	apiMux.Handle("GET /groups/{id}", require("nodes", "read", nodeGroupsCtrl.HandleGetGroup))
+	apiMux.Handle("PUT /groups/{id}", require("nodes", "write", nodeGroupsCtrl.HandleUpdateGroup))
+	apiMux.Handle("DELETE /groups/{id}", require("nodes", "write", nodeGroupsCtrl.HandleDeleteGroup))
+	apiMux.Handle("GET /groups/{id}/nodes", require("nodes", "read", nodeGroupsCtrl.HandleListGroupNodes))
+	apiMux.Handle("POST /groups/{id}/members", require("nodes", "write", nodeGroupsCtrl.HandleAddMember))
+	apiMux.Handle("DELETE /groups/{id}/members/{nodeId}", require("nodes", "write", nodeGroupsCtrl.HandleRemoveMember))
+	apiMux.Handle("POST /groups/{id}/files", require("nodes", "write", filesCtrl.HandleDistributeToGroup))
+	apiMux.Handle("GET /groups/{id}/volumes", require("docker", "read", dockerCtrl.HandleListVolumesForGroup))
+
+	// CRA compliance report (admin only)
+	apiMux.Handle("GET /compliance/report", require("admin", "admin", complianceCtrl.HandleReport))
+	// Webhooks (admin only)
+	apiMux.Handle("GET /webhooks", require("admin", "admin", webhookCtrl.HandleList))
+	apiMux.Handle("POST /webhooks", require("admin", "admin", webhookCtrl.HandleCreate))
+	apiMux.Handle("GET /webhooks/{id}", require("admin", "admin", webhookCtrl.HandleGet))
+	apiMux.Handle("PUT /webhooks/{id}", require("admin", "admin", webhookCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /webhooks/{id}", require("admin", "admin", webhookCtrl.HandleDelete))
+	apiMux.Handle("POST /webhooks/{id}/test", require("admin", "admin", webhookCtrl.HandleTest))
+
+	// Audit log forwarders (admin only)
+	apiMux.Handle("GET /audit/forwarders", require("admin", "admin", auditFwdCtrl.HandleList))
+	apiMux.Handle("POST /audit/forwarders", require("admin", "admin", auditFwdCtrl.HandleCreate))
+	apiMux.Handle("GET /audit/forwarders/{id}", require("admin", "admin", auditFwdCtrl.HandleGet))
+	apiMux.Handle("PUT /audit/forwarders/{id}", require("admin", "admin", auditFwdCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /audit/forwarders/{id}", require("admin", "admin", auditFwdCtrl.HandleDelete))
+
+	// SCIM token management (admin only)
+	apiMux.Handle("GET /scim/tokens", require("admin", "admin", scimCtrl.HandleListTokens))
+	apiMux.Handle("POST /scim/tokens", require("admin", "admin", scimCtrl.HandleCreateToken))
+	apiMux.Handle("DELETE /scim/tokens/{id}", require("admin", "admin", scimCtrl.HandleDeleteToken))
+
 	// Recovery (emergency key recovery)
 	recoveryCtrl := handlers.NewRecoveryHandler(db, kmsProvider)
 	apiMux.Handle("POST /recovery/generate-shares", require("admin", "admin", recoveryCtrl.HandleGenerateShares))
 	apiMux.Handle("POST /recovery/recover", require("admin", "admin", recoveryCtrl.HandleRecover))
 	apiMux.Handle("POST /recovery/reissue-shares", require("admin", "admin", recoveryCtrl.HandleReissueShares))
+
+	// System info
+	systemCtrl := handlers.NewSystemHandler(db, db)
+	apiMux.Handle("GET /system/tls-mode", http.HandlerFunc(systemCtrl.HandleTLSMode))
+	apiMux.Handle("GET /system/stats", require("nodes", "read", systemCtrl.HandleSystemStats))
+	apiMux.Handle("GET /system/stats/history", require("nodes", "read", systemCtrl.HandleSystemStatsHistory))
+
+	// Background: collect and store local resource stats every 60 seconds
+	go func() {
+		collectStats := func() {
+			s, err := sysinfo.Collect()
+			if err != nil {
+				return
+			}
+			db.SaveNodeStats(ctx, store.NodeStatRecord{
+				ID:         fmt.Sprintf("%d", time.Now().UnixNano()),
+				CPUPercent: s.CPUPercent,
+				MemUsed:    s.MemUsed,
+				MemTotal:   s.MemTotal,
+				DiskUsed:   s.DiskUsed,
+				DiskTotal:  s.DiskTotal,
+				Load1:      s.Load1,
+				Load5:      s.Load5,
+				Load15:     s.Load15,
+				RecordedAt: s.RecordedAt,
+			})
+			metrics.NodeCPUPercent.Set(s.CPUPercent)
+			metrics.NodeMemPercent.Set(s.MemPercent)
+			metrics.NodeDiskPercent.Set(s.DiskPercent)
+		}
+		collectStats()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				collectStats()
+			}
+		}
+	}()
+
+	// Alert evaluator
+	go alerts.NewEvaluator(db, dispatcher).Start(ctx)
+
+	// Network policy reconciler: recomputes the full iptables rule set from
+	// the current policies every minute (same cadence as the alert
+	// evaluator) and reapplies it locally + pushes it to every node, in
+	// case something external flushed the chain or a node was offline
+	// during the last change. Policy CRUD also triggers an immediate
+	// out-of-band reconcile (see network_policy_handler.go) so changes
+	// don't wait for the next tick.
+	go func() {
+		handlers.Reconcile(ctx, db, "wg0")
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				handlers.Reconcile(ctx, db, "wg0")
+			}
+		}
+	}()
+
+	// GitOps reconciler: each source has its own poll interval, so rather
+	// than one goroutine per source this runs a single fast ticker and asks
+	// the handler which sources are actually due (last_synced_at + their
+	// own poll_interval_seconds) each time. Manual/webhook syncs also call
+	// straight into the same sync path out-of-band (see gitops_handler.go)
+	// so they don't wait for this tick.
+	go func() {
+		gitopsCtrl.ReconcileDue(ctx)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				gitopsCtrl.ReconcileDue(ctx)
+			}
+		}
+	}()
+
+	// Certificates: inventory/rotation API, plus a daily expiry check that
+	// fires a webhook once a cert is within certExpiryWarnDays of NotAfter.
+	// Only meaningful in "manual" TLS mode — see the comment where certStore
+	// is constructed above.
+	certsCtrl := handlers.NewCertificatesHandler(certStore, tlsMode, certExpiryWarnDays)
+	apiMux.Handle("GET /admin/certificates", require("admin", "admin", certsCtrl.HandleList))
+	apiMux.Handle("POST /admin/certificates/rotate", require("admin", "admin", certsCtrl.HandleRotate))
+	if certStore != nil {
+		go func() {
+			checkExpiring := func() {
+				for _, c := range certStore.Info(certExpiryWarnDays) {
+					if !c.ExpiringSoon {
+						continue
+					}
+					logger.Warn("certificate expiring soon", "role", c.Role, "subject", c.Subject, "days_remaining", c.DaysRemaining)
+					dispatcher.Send(webhooks.Event{
+						Type:      "certificate.expiring",
+						Timestamp: time.Now(),
+						Payload: map[string]any{
+							"role":           c.Role,
+							"subject":        c.Subject,
+							"not_after":      c.NotAfter.Format(time.RFC3339),
+							"days_remaining": c.DaysRemaining,
+						},
+					})
+				}
+			}
+			checkExpiring()
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					checkExpiring()
+				}
+			}
+		}()
+	}
+
+	// Backup & restore
+	backupDriver := "sqlite"
+	backupSQLitePath := filepath.Join(dataDir, "scutum.db")
+	if strings.HasPrefix(dbURL, "postgres://") || strings.HasPrefix(dbURL, "postgresql://") {
+		backupDriver = "postgres"
+		backupSQLitePath = ""
+	} else if strings.HasPrefix(dbURL, "mysql://") {
+		backupDriver = "mysql"
+		backupSQLitePath = ""
+	}
+	backupCtrl := handlers.NewBackupHandler(db, dataDir, backupDriver, dbURL, backupSQLitePath)
+	apiMux.Handle("GET /admin/backups", require("admin", "admin", backupCtrl.HandleList))
+	apiMux.Handle("POST /admin/backups", require("admin", "admin", backupCtrl.HandleCreate))
+	apiMux.Handle("GET /admin/backups/{id}/download", require("admin", "admin", backupCtrl.HandleDownload))
+	apiMux.Handle("DELETE /admin/backups/{id}", require("admin", "admin", backupCtrl.HandleDelete))
+	apiMux.Handle("POST /admin/backups/{id}/restore", require("admin", "admin", backupCtrl.HandleRestore))
+
+	// Alert rules and events
+	alertsCtrl := handlers.NewAlertsHandler(db)
+	apiMux.Handle("GET /alerts/rules", require("admin", "admin", alertsCtrl.HandleListRules))
+	apiMux.Handle("POST /alerts/rules", require("admin", "admin", alertsCtrl.HandleCreateRule))
+	apiMux.Handle("PUT /alerts/rules/{id}", require("admin", "admin", alertsCtrl.HandleUpdateRule))
+	apiMux.Handle("DELETE /alerts/rules/{id}", require("admin", "admin", alertsCtrl.HandleDeleteRule))
+	apiMux.Handle("PUT /alerts/rules/{id}/silence", require("admin", "admin", alertsCtrl.HandleSilenceRule))
+	apiMux.Handle("GET /alerts/events", require("admin", "admin", alertsCtrl.HandleListEvents))
+	apiMux.Handle("POST /alerts/events/{id}/acknowledge", require("admin", "admin", alertsCtrl.HandleAcknowledgeEvent))
 
 	// API docs (public)
 	docsCtrl := handlers.NewDocsHandler(openAPISpec)
@@ -539,14 +889,25 @@ func main() {
 	// We remove authMW from the global wrapper so that apiMux can manage its own public/private routes.
 	mainMux.Handle("/api/", http.StripPrefix("/api", metricsMiddleware(tracingMiddleware(logger, apiMux))))
 
-	// Nuxt generates hashed filenames under /_nuxt/ so they can be cached forever.
+	// SCIM 2.0 — mounted at /scim/v2/ with its own token auth
+	scimMux := http.NewServeMux()
+	scimMux.HandleFunc("GET /ServiceProviderConfig", scimCtrl.HandleServiceProviderConfig)
+	scimMux.Handle("GET /Users", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleListUsers)))
+	scimMux.Handle("POST /Users", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleCreateUser)))
+	scimMux.Handle("GET /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleGetUser)))
+	scimMux.Handle("PUT /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleReplaceUser)))
+	scimMux.Handle("PATCH /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandlePatchUser)))
+	scimMux.Handle("DELETE /Users/{id}", scimCtrl.AuthMiddleware(http.HandlerFunc(scimCtrl.HandleDeleteUser)))
+	mainMux.Handle("/scim/v2/", http.StripPrefix("/scim/v2", scimMux))
+
+	// Vite generates hashed filenames under /assets/ so they can be cached forever.
 	sub, _ := fs.Sub(frontendFS, "dist")
-	nuxtFileServer := http.FileServer(http.FS(sub))
+	frontendFileServer := http.FileServer(http.FS(sub))
 	staticHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/_nuxt/") {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
-		nuxtFileServer.ServeHTTP(w, r)
+		frontendFileServer.ServeHTTP(w, r)
 	})
 
 	mainMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -554,7 +915,7 @@ func main() {
 
 		// For paths without a trailing slash, check if a directory index exists
 		// and serve it directly — avoids the file server's 301 redirect which
-		// causes an infinite loop with Nuxt's client-side router normalisation.
+		// causes an infinite loop with the client-side router's normalisation.
 		if !strings.HasSuffix(urlPath, "/") {
 			if data, err := frontendFS.ReadFile("dist" + urlPath + "/index.html"); err == nil {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -569,7 +930,9 @@ func main() {
 			return
 		}
 
-		// Unknown paths fall back to index.html so client-side routing works.
+		// Unknown paths fall back to index.html — this is a client-side-routed
+		// SPA (React Router), not prerendered pages, so every real route
+		// (and any dead link) is served the same shell and resolved in JS.
 		index, err := frontendFS.ReadFile("dist/index.html")
 		if err != nil {
 			http.Error(w, "Not Found", http.StatusNotFound)
@@ -597,10 +960,39 @@ func main() {
 		TLSConfig:    tlsConfig,
 	}
 
-	if useTLS {
+	acmeCfg := scutumacme.FromEnv(secretsDir)
+	if acmeCfg.Enabled() {
+		acmeMgr := scutumacme.New(acmeCfg)
+		server.TLSConfig = acmeMgr.TLSConfig()
+		go func() {
+			logger.Info("ACME HTTP-01 challenge server starting", "addr", ":80")
+			if err := http.ListenAndServe(":80", acmeMgr.ChallengeHandler(acmeCfg.Domain)); !errors.Is(err, http.ErrServerClosed) { //nolint:gosec
+				logger.Error("acme http server failed", "error", err)
+			}
+		}()
+		logger.Info("scutum API starting (HTTPS/ACME)", "addr", port, "domain", acmeCfg.Domain)
+		go func() {
+			ln, err := tls.Listen("tcp", port, acmeMgr.TLSConfig())
+			if err != nil {
+				logger.Fatal("acme tls listener failed", "error", err)
+			}
+			if err := server.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+				logger.Fatal("https server failed", "error", err)
+			}
+		}()
+	} else if useTLS {
 		logger.Info("scutum API starting (HTTPS)", "addr", port, "cert", certFile)
 		go func() {
-			if err := server.ListenAndServeTLS(certFile, keyFile); !errors.Is(err, http.ErrServerClosed) {
+			// tls.Listen + Serve (rather than ListenAndServeTLS(certFile, keyFile))
+			// so tlsConfig.GetConfigForClient — wired to certStore above — is what
+			// actually serves the cert on every handshake, letting rotation take
+			// effect without a restart. ListenAndServeTLS would otherwise re-read
+			// certFile/keyFile once at startup and ignore GetConfigForClient.
+			ln, err := tls.Listen("tcp", port, tlsConfig)
+			if err != nil {
+				logger.Fatal("tls listener failed", "error", err)
+			}
+			if err := server.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 				logger.Fatal("https server failed", "error", err)
 			}
 		}()
@@ -631,6 +1023,7 @@ func main() {
 	}
 	healer.Stop()
 	pusher.Stop()
+	dispatcher.Stop()
 	if err := db.Close(); err != nil {
 		logger.Error("db close error", "error", err)
 	}
@@ -759,6 +1152,11 @@ func loadOrGenerateHMACKey(ctx context.Context, db *store.Store, secretsDir stri
 }
 
 func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, healer *sync.Healer, clientTLSConfig *tls.Config) error {
+	installType, err := db.GetInstallType(ctx)
+	if err != nil {
+		return fmt.Errorf("get install type: %w", err)
+	}
+
 	peers, err := db.ListWGPeers(ctx)
 	if err != nil {
 		return fmt.Errorf("list peers: %w", err)
@@ -770,29 +1168,46 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 	}
 
 	for _, node := range nodes {
-		if node.Type != "remote" && node.Type != "combined" {
-			continue
+		// Only register nodes with the pusher if we are the hub and they are edge nodes.
+		if installType == store.InstallHub && (node.Type == "remote" || node.Type == "combined") {
+			apiBase := roaming.NodeAPIBase(node.Address)
+			if apiBase != "" {
+				token, _ := db.GetSecret(ctx, "edge_token_"+node.ID)
+				sink := sync.NewHTTPEdgeSink(node.ID, apiBase+"/sync", string(token), clientTLSConfig)
+				pusher.Register(sink)
+				logger.Info("registered edge", "node_id", node.ID)
+			}
 		}
-		apiBase := nodeAPIBase(node.Address)
-		if apiBase == "" {
-			continue
-		}
-		token, _ := db.GetSecret(ctx, "edge_token_"+node.ID)
-		sink := sync.NewHTTPEdgeSink(node.ID, apiBase+"/sync", string(token), clientTLSConfig)
-		pusher.Register(sink)
-		logger.Info("registered edge", "node_id", node.ID)
 
-		// Register with healer, wiring FreshEndpoint so the healer re-adds the
-		// peer using the latest DB endpoint if the edge registers a new one.
+		// Hub monitors edge nodes. Edge nodes monitor the hub node.
+		shouldHeal := false
+		if installType == store.InstallHub {
+			shouldHeal = (node.Type == "remote" || node.Type == "combined")
+		} else {
+			shouldHeal = (node.Type == "hub")
+		}
+
+		if !shouldHeal {
+			continue
+		}
+
+		// Register with healer. FreshEndpoint first checks WireGuard's live
+		// kernel state — which persistent-keepalive keeps current automatically
+		// — then falls back to the DB for cold-start cases where the tunnel
+		// has not yet had a keepalive exchange.
 		for _, p := range peers {
 			if p.NodeID == node.ID {
-				nodeID := node.ID // capture for closure
+				nodeID := node.ID        // capture for closure
+				pubKey := node.PublicKey // capture for closure
 				healer.AddPeer(sync.WGPeer{
 					IfaceName:  "wg0",
-					PublicKey:  node.PublicKey,
+					PublicKey:  pubKey,
 					Endpoint:   p.Endpoint,
 					AllowedIPs: p.AllowedIPs,
 					FreshEndpoint: func(ctx context.Context) (string, error) {
+						if ep, err := utils.GetPeerEndpoint("wg0", pubKey); err == nil && ep != "" {
+							return ep, nil
+						}
 						fresh, err := db.GetWGPeer(ctx, nodeID)
 						if err != nil {
 							return "", err
@@ -807,10 +1222,15 @@ func registerEdges(ctx context.Context, db *store.Store, pusher *sync.Pusher, he
 	return nil
 }
 
-// registerOwnEndpoint is called on edge (remote/combined) nodes at startup to
-// push our current WireGuard listen port to the hub. The hub derives the full
-// endpoint as "observed-source-IP:listen_port" and updates its wg_peers table,
-// ensuring the tunnel reconnects even when our NAT mapping or IP has changed.
+// registerOwnEndpoint runs once at startup on edge (remote/combined) nodes. It
+// pushes the node's current WireGuard listen port to the hub so the hub's
+// wg_peers table reflects the correct endpoint after a restart or IP change.
+//
+// Ongoing NAT roaming is handled by WireGuard itself: persistent-keepalive = 25
+// causes the edge node to send a keepalive packet to the hub every 25 seconds.
+// When the edge node changes public IP, WireGuard on the hub updates the peer's
+// endpoint automatically from the new packet source — no periodic application-
+// layer re-registration is needed.
 func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Logger, tlsConfig *tls.Config) {
 	installType, err := db.GetInstallType(ctx)
 	if err != nil || (installType != store.InstallRemote && installType != store.InstallCombined) {
@@ -834,7 +1254,7 @@ func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Log
 		logger.Warn("registerOwnEndpoint: no hub node in DB, skipping")
 		return
 	}
-	hubAPIBase := nodeAPIBase(hubAddr)
+	hubAPIBase := roaming.NodeAPIBase(hubAddr)
 
 	// Our WireGuard public key.
 	pubKeyBytes, err := utils.DefaultCommandRunner.Output("wg", "show", "wg0", "public-key")
@@ -864,8 +1284,9 @@ func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Log
 		return
 	}
 
+	// Initial registration with retry backoff.
 	for attempt := 1; attempt <= 5; attempt++ {
-		if err := callRegisterEndpoint(ctx, hubAPIBase, pubKey, listenPort, hmacKey, tlsConfig); err != nil {
+		if err := roaming.CallRegisterEndpoint(ctx, hubAPIBase, pubKey, listenPort, hmacKey, tlsConfig); err != nil {
 			logger.Warn("registerOwnEndpoint: attempt failed, retrying",
 				"attempt", attempt, "error", err)
 			select {
@@ -877,47 +1298,9 @@ func registerOwnEndpoint(ctx context.Context, db *store.Store, logger *utils.Log
 		}
 		logger.Info("registerOwnEndpoint: endpoint registered with hub",
 			"hub", hubAPIBase, "listen_port", listenPort)
-		return
-	}
-	logger.Error("registerOwnEndpoint: all attempts failed")
-}
-
-// callRegisterEndpoint sends a signed POST to the hub's /api/network/register-endpoint.
-// It uses the same HMAC signing format as hub-proxied requests so the hub's existing
-// auth middleware accepts it without additional setup.
-func callRegisterEndpoint(ctx context.Context, hubAPIBase, pubKey string, listenPort int, hmacKey []byte, tlsConfig *tls.Config) error {
-	body, _ := json.Marshal(map[string]interface{}{
-		"public_key":  pubKey,
-		"listen_port": listenPort,
-	})
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		hubAPIBase+"/api/network/register-endpoint", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		break
 	}
 
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	mac := hmac.New(sha256.New, hmacKey)
-	fmt.Fprintf(mac, "%s\n%s\n%s\n", ts, req.Method, "/api/network/register-endpoint")
-	sig := hex.EncodeToString(mac.Sum(nil))
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Scutum-Hub-Sig", sig)
-	req.Header.Set("X-Scutum-Hub-Ts", ts)
-
-	resp, err := (&http.Client{
-		Timeout:   10 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
-	}).Do(req)
-	if err != nil {
-		return fmt.Errorf("http: %w", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("hub returned HTTP %d", resp.StatusCode)
-	}
-	return nil
 }
 
 // restoreWGPeers re-adds all WireGuard peers from the database after the
@@ -938,35 +1321,21 @@ func restoreWGPeers(ctx context.Context, db *store.Store, logger *utils.Logger) 
 	for _, n := range nodes {
 		keyByNodeID[n.ID] = n.PublicKey
 	}
+	keepalive := 25
+	if settings, err := db.GetSystemSettings(ctx); err == nil && settings.MeshKeepaliveSeconds > 0 {
+		keepalive = settings.MeshKeepaliveSeconds
+	}
 	for _, p := range peers {
 		pubKey, ok := keyByNodeID[p.NodeID]
 		if !ok || pubKey == "" {
 			continue
 		}
-		if err := utils.AddPeer("wg0", pubKey, p.Endpoint, p.AllowedIPs, 25); err != nil {
+		if err := utils.AddPeer("wg0", pubKey, p.Endpoint, p.AllowedIPs, keepalive); err != nil {
 			logger.Warn("restoreWGPeers: failed to re-add peer", "node_id", p.NodeID, "error", err)
 		} else {
 			logger.Info("restoreWGPeers: re-added peer", "node_id", p.NodeID)
 		}
 	}
-}
-
-// nodeAPIBase converts a node's stored address (which may be a WireGuard CIDR
-// like "10.x.x.x/24" or a proper "host:port") into an "https://host:port" base
-// URL suitable for API sync and proxy calls. Returns "" if addr is empty.
-func nodeAPIBase(addr string) string {
-	if addr == "" {
-		return ""
-	}
-	// Strip CIDR suffix (e.g. "10.0.0.2/24" → "10.0.0.2")
-	if idx := strings.Index(addr, "/"); idx != -1 && !strings.Contains(addr[:idx], ":") {
-		addr = addr[:idx]
-	}
-	// Add default port if none present
-	if !strings.Contains(addr, ":") {
-		addr = addr + ":8080"
-	}
-	return "https://" + addr
 }
 
 type responseWriter struct {

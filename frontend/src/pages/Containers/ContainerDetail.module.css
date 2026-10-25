@@ -1,0 +1,235 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--paper-dim);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.backLink:hover {
+  color: var(--paper);
+}
+
+/* ── Report header ──────────────────────────────────────────────── */
+
+.reportHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reportTitle {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+/* Badge + actions grouped as one cluster on the header's trailing edge,
+   instead of the state badge in the header and the action buttons in a
+   second, disconnected row below. */
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  flex-wrap: wrap;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ── Info grid ──────────────────────────────────────────────────── */
+
+/* Stretch (grid default) so the three cards share one height instead of
+   each shrinking to its own content — same reasoning as Dashboard's
+   topology/nodes row. */
+.infoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+.secondRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+}
+
+.detailList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0.4rem 1.15rem 1.15rem;
+}
+.detailList > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--ink-line);
+  font-size: 0.85rem;
+}
+.detailList > div:last-child {
+  border-bottom: none;
+}
+.detailList dt {
+  color: var(--paper-dim);
+  flex-shrink: 0;
+}
+.detailList dd {
+  margin: 0;
+  color: var(--paper);
+  text-align: right;
+  word-break: break-all;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+/* ── Resources ──────────────────────────────────────────────────── */
+
+.resourceList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.5rem 1.15rem 1.15rem;
+}
+.resourceRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.resourceLabel {
+  width: 64px;
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+.statLine {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: var(--paper-dim);
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--ink-line);
+}
+
+/* Incoming (Rx/read) vs outgoing (Tx/write) — same blueprint-in /
+   rust-out convention used for the icons on the Network page's stat cards. */
+.arrowDown {
+  color: var(--blueprint-bright);
+  font-weight: 600;
+}
+.arrowUp {
+  color: var(--rust-bright);
+  font-weight: 600;
+}
+
+.refreshBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--paper-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+}
+.refreshBtn:hover {
+  color: var(--paper);
+  background: color-mix(in srgb, var(--paper) 8%, transparent);
+}
+.refreshBtn:active {
+  transform: rotate(90deg);
+}
+
+/* ── Environment ────────────────────────────────────────────────── */
+
+.envList {
+  margin: 0;
+  padding: 0.5rem 1.15rem 1.15rem;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--paper-faint);
+}
+
+/* ── Logs ───────────────────────────────────────────────────────── */
+
+.calloutWrap {
+  margin: 1rem 1.15rem 0;
+}
+
+.logActions {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+/* The shared Checkbox component's own row has a margin-bottom meant for
+   stacking in a vertical form — reset it here since it sits inline in a
+   horizontal action row instead. */
+.followToggle label {
+  margin-bottom: 0;
+}
+
+.logList {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+.logRow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.85rem;
+  padding: 0.55rem 1.15rem;
+  border-bottom: 1px solid var(--ink-line);
+}
+.logRow:last-child {
+  border-bottom: none;
+}
+.logTime {
+  color: var(--paper-dim);
+  flex-shrink: 0;
+}
+.logStreamOut,
+.logStreamErr {
+  flex-shrink: 0;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  min-width: 5ch;
+}
+.logStreamOut {
+  color: var(--blueprint-bright);
+}
+.logStreamErr {
+  color: var(--danger);
+}
+.logMsg {
+  color: var(--paper-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

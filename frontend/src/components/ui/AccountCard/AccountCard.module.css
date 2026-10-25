@@ -1,0 +1,153 @@
+.wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid var(--ink-line-strong);
+  background: var(--ink);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem 0.3rem 0.3rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.trigger:hover {
+  border-color: var(--paper-dim);
+  background: var(--ink-raised);
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+  background: var(--rust);
+  color: var(--on-rust);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+  text-align: left;
+}
+
+.name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.role {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--paper-dim);
+  white-space: nowrap;
+}
+
+.chevron,
+.chevronOpen {
+  color: var(--paper-dim);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+/* Same breakpoint the topbar's search-button label hides at — between the
+   hamburger, page title, search button, and this, a phone-width topbar
+   doesn't have room for a full name + role too. Avatar + chevron alone is
+   still a tap target, just compact. */
+@media (max-width: 640px) {
+  .info {
+    display: none;
+  }
+  .trigger {
+    padding: 0.3rem;
+    gap: 0.3rem;
+  }
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: none;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  padding: 0.4rem;
+  box-shadow: var(--shadow-lg);
+  transform-origin: top right;
+  animation: menu-in 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--paper-faint);
+  font-family: var(--body);
+  font-size: 0.85rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+}
+.menuItem:hover {
+  background: color-mix(in srgb, var(--paper) 8%, transparent);
+  color: var(--paper);
+}
+
+.menuLabel {
+  flex: 1;
+}
+
+.menuDivider {
+  height: 1px;
+  background: var(--ink-line);
+  margin: 0.3rem 0.2rem;
+}
+
+.menuItemDanger:hover {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}

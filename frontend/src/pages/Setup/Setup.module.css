@@ -1,0 +1,206 @@
+.stepTrack {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1.75rem;
+}
+.stepTrackItem {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+.stepTrackItem:last-child {
+  flex: 0;
+}
+
+.stepNode {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--ink-line-strong);
+  background: var(--ink);
+  color: var(--paper-dim);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+.stepNodeActive {
+  border-color: var(--rust);
+  background: color-mix(in srgb, var(--rust) 18%, transparent);
+  color: var(--rust-bright);
+}
+.stepNodeDone {
+  border-color: var(--blueprint);
+  background: color-mix(in srgb, var(--blueprint) 18%, transparent);
+  color: var(--blueprint-bright);
+}
+.stepLine {
+  flex: 1;
+  height: 1px;
+  background: var(--ink-line-strong);
+  margin: 0 0.4rem;
+}
+.stepLineDone {
+  background: var(--blueprint);
+}
+
+.stepHeading {
+  font-size: 1.3rem;
+  margin-bottom: 0.6rem;
+}
+.stepDesc {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--paper-faint);
+  margin-bottom: 1.25rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.rangeInput {
+  width: 100%;
+  accent-color: var(--rust);
+  cursor: pointer;
+}
+.rangeLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  color: var(--paper-dim);
+  padding: 0 2px;
+}
+
+.recoveryPreview {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--paper-faint);
+  background: color-mix(in srgb, var(--blueprint) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--blueprint) 25%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  line-height: 1.55;
+  margin-top: 0.25rem;
+}
+.recoveryPreview svg {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  color: var(--blueprint-bright);
+}
+.recoveryPreview strong {
+  color: var(--paper);
+}
+
+.doneIcon {
+  display: flex;
+  justify-content: center;
+  color: var(--blueprint-bright);
+  margin-bottom: 0.5rem;
+}
+
+.summaryList {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+}
+.summaryRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--ink-line);
+  gap: 1rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+.summaryRow:last-child {
+  border-bottom: none;
+}
+.summaryLabel {
+  color: var(--paper-dim);
+  flex-shrink: 0;
+}
+.summaryVal {
+  color: var(--paper);
+  text-align: right;
+  word-break: break-all;
+}
+.summaryValKey {
+  flex: 1;
+  font-family: var(--mono);
+  text-align: left;
+}
+
+.sharesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+.shareCard {
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--ink);
+  padding: 0.6rem 0.75rem;
+}
+.shareCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+.shareCardLabel {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--paper-dim);
+}
+.shareCardActions {
+  display: flex;
+  gap: 0.15rem;
+}
+.shareCardValue {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--paper);
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.copyBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--paper-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.copyBtn:hover {
+  color: var(--paper);
+  background: color-mix(in srgb, var(--paper) 8%, transparent);
+}
+
+.stepLabel {
+  margin: 1.5rem 0 0;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--paper-dim);
+}

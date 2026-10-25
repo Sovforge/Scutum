@@ -1,0 +1,89 @@
+/* One continuous instrument-panel strip instead of a grid of separate
+   boxed cards — the classic SaaS "KPI card grid" is exactly the generic
+   shape we're trying to get away from. The hairline dividers between
+   segments are the gap-as-background trick already used for the Landing
+   page's doctrine grid: a 1px gap shows the line color through, so it
+   works at any wrap point without per-item border bookkeeping. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--statMinWidth, 190px), 1fr));
+  gap: 1px;
+  background: var(--ink-line-strong);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.stat {
+  background: var(--ink-raised);
+  border-top: 3px solid var(--statColor, var(--blueprint));
+  padding: 1rem 1.15rem;
+  transition: background-color 0.15s ease;
+}
+.stat:hover {
+  background: color-mix(in srgb, var(--paper) 5%, var(--ink-raised));
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--statColor, var(--blueprint)) 18%, transparent);
+  color: var(--statColor, var(--blueprint));
+  flex-shrink: 0;
+}
+
+.value {
+  display: block;
+  font-family: var(--display);
+  font-size: 2rem;
+  line-height: 1;
+  color: var(--paper);
+  margin-bottom: 0.35rem;
+}
+
+.sub {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--paper-faint);
+}
+
+/* TV mode — needs to read from across a room. */
+.statLarge {
+  border-top-width: 4px;
+  padding: 1.25rem 1.5rem;
+}
+.statLarge .label {
+  font-size: 0.85rem;
+  margin-bottom: 0.1rem;
+}
+.statLarge .value {
+  font-size: 3.4rem;
+  margin-bottom: 0.4rem;
+}
+.statLarge .sub {
+  font-size: 1rem;
+}

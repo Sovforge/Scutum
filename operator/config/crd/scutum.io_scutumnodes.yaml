@@ -1,0 +1,145 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: scutumnodes.scutum.io
+spec:
+  group: scutum.io
+  names:
+    kind: ScutumNode
+    listKind: ScutumNodeList
+    plural: scutumnodes
+    singular: scutumnode
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Ready
+          type: boolean
+          jsonPath: .status.ready
+        - name: NodeID
+          type: string
+          jsonPath: .status.nodeID
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - hubRef
+                - nodeName
+              properties:
+                hubRef:
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: "Name of the ScutumHub in the same namespace."
+                nodeName:
+                  type: string
+                  description: "Display name registered with the hub mesh."
+                nodeType:
+                  type: string
+                  default: "remote"
+                  enum:
+                    - remote
+                    - combined
+                  description: "Install type: remote or combined."
+                image:
+                  type: string
+                  default: "ghcr.io/sovforge/scutum:latest"
+                  description: "Container image for the edge node."
+                storage:
+                  type: object
+                  properties:
+                    dataSize:
+                      type: string
+                      default: "2Gi"
+                      description: "Size of the data PVC."
+                    secretsSize:
+                      type: string
+                      default: "256Mi"
+                      description: "Size of the secrets PVC."
+                    storageClass:
+                      type: string
+                      description: "StorageClass for both PVCs."
+                resources:
+                  type: object
+                  description: "Compute resource requirements for the node container."
+                  properties:
+                    limits:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    requests:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                tlsSkipVerify:
+                  type: boolean
+                  default: true
+                  description: "Skip TLS verification when calling the hub API."
+                meshAddress:
+                  type: string
+                  description: "Desired WireGuard mesh IP for this node, e.g. 10.0.0.2/32."
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: "True when fully enrolled and StatefulSet has a ready replica."
+                phase:
+                  type: string
+                  description: "Lifecycle phase: Pending, Enrolling, Configuring, Running, or Error."
+                nodeID:
+                  type: string
+                  description: "UUID assigned by the hub after enrollment."
+                meshAddress:
+                  type: string
+                  description: "WireGuard mesh IP assigned to this node."
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      reason:
+                        type: string
+                      status:
+                        type: string
+                      type:
+                        type: string
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  description: "Generation last processed by the controller."

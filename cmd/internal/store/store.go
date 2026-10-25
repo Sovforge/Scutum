@@ -312,6 +312,105 @@ func (s *Store) GetS3Config(ctx context.Context) (S3Config, error) {
 }
 
 // ---------------------------------------------------------------------------
+// System settings (Settings → General/Mesh/Nodes/Auth) — a single row,
+// same pattern as S3Config/git_config. Booleans are stored as 0/1 for
+// portability across SQLite/MySQL/PostgreSQL.
+// ---------------------------------------------------------------------------
+
+type SystemSettings struct {
+	ClusterName           string
+	Region                string
+	LogLevel              string
+	MeshMTU               int
+	MeshKeepaliveSeconds  int
+	NodeDefaultRole       string
+	NodeRequireApproval   bool
+	AuthRequireMFA        bool
+	AuthSessionTimeoutMin int
+}
+
+// defaultSystemSettings mirrors the column defaults, returned when no row
+// has been written yet (fresh installs before the first Settings save).
+func defaultSystemSettings() SystemSettings {
+	return SystemSettings{
+		LogLevel:              "info",
+		MeshMTU:               1420,
+		MeshKeepaliveSeconds:  25,
+		NodeDefaultRole:       "remote",
+		AuthSessionTimeoutMin: 1440,
+	}
+}
+
+func (s *Store) GetSystemSettings(ctx context.Context) (SystemSettings, error) {
+	var cfg SystemSettings
+	var requireApproval, requireMFA int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT cluster_name, region, log_level, mesh_mtu, mesh_keepalive_s,
+		       node_default_role, node_require_approval, auth_require_mfa, auth_session_timeout_min
+		FROM system_settings WHERE id = 1
+	`).Scan(
+		&cfg.ClusterName, &cfg.Region, &cfg.LogLevel, &cfg.MeshMTU, &cfg.MeshKeepaliveSeconds,
+		&cfg.NodeDefaultRole, &requireApproval, &requireMFA, &cfg.AuthSessionTimeoutMin,
+	)
+	if err == sql.ErrNoRows {
+		return defaultSystemSettings(), nil
+	}
+	if err != nil {
+		return SystemSettings{}, fmt.Errorf("query system_settings: %w", err)
+	}
+	cfg.NodeRequireApproval = requireApproval != 0
+	cfg.AuthRequireMFA = requireMFA != 0
+	return cfg, nil
+}
+
+func (s *Store) UpdateSystemSettings(ctx context.Context, cfg SystemSettings) error {
+	boolInt := func(b bool) int {
+		if b {
+			return 1
+		}
+		return 0
+	}
+	args := []interface{}{
+		cfg.ClusterName, cfg.Region, cfg.LogLevel, cfg.MeshMTU, cfg.MeshKeepaliveSeconds,
+		cfg.NodeDefaultRole, boolInt(cfg.NodeRequireApproval), boolInt(cfg.AuthRequireMFA), cfg.AuthSessionTimeoutMin,
+	}
+
+	var q string
+	switch s.driver.(type) {
+	case *MySQLDriver:
+		q = fmt.Sprintf(`
+			INSERT INTO system_settings (
+				id, cluster_name, region, log_level, mesh_mtu, mesh_keepalive_s,
+				node_default_role, node_require_approval, auth_require_mfa, auth_session_timeout_min
+			) VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+			ON DUPLICATE KEY UPDATE
+				cluster_name = VALUES(cluster_name), region = VALUES(region), log_level = VALUES(log_level),
+				mesh_mtu = VALUES(mesh_mtu), mesh_keepalive_s = VALUES(mesh_keepalive_s),
+				node_default_role = VALUES(node_default_role), node_require_approval = VALUES(node_require_approval),
+				auth_require_mfa = VALUES(auth_require_mfa), auth_session_timeout_min = VALUES(auth_session_timeout_min)
+		`, s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9))
+	default: // SQLite and PostgreSQL
+		q = fmt.Sprintf(`
+			INSERT INTO system_settings (
+				id, cluster_name, region, log_level, mesh_mtu, mesh_keepalive_s,
+				node_default_role, node_require_approval, auth_require_mfa, auth_session_timeout_min
+			) VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+			ON CONFLICT(id) DO UPDATE SET
+				cluster_name = excluded.cluster_name, region = excluded.region, log_level = excluded.log_level,
+				mesh_mtu = excluded.mesh_mtu, mesh_keepalive_s = excluded.mesh_keepalive_s,
+				node_default_role = excluded.node_default_role, node_require_approval = excluded.node_require_approval,
+				auth_require_mfa = excluded.auth_require_mfa, auth_session_timeout_min = excluded.auth_session_timeout_min
+		`, s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9))
+	}
+
+	_, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("upsert system_settings: %w", err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // WireGuard keys (stored via KMS secrets)
 // ---------------------------------------------------------------------------
 
@@ -390,6 +489,32 @@ func (s *Store) ListWGPeers(ctx context.Context) ([]WGPeerRecord, error) {
 	return peers, rows.Err()
 }
 
+// WGPeerHandshakeAges returns a map of nodeID → last_handshake time for all peers
+// that have a recorded handshake. Peers with NULL last_handshake are omitted.
+func (s *Store) WGPeerHandshakeAges(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT node_id, last_handshake FROM wg_peers WHERE last_handshake IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]time.Time)
+	for rows.Next() {
+		var nodeID, hs string
+		if err := rows.Scan(&nodeID, &hs); err != nil {
+			return nil, err
+		}
+		// Try RFC3339 first, then SQLite's default DATETIME format.
+		t, err := time.Parse(time.RFC3339, hs)
+		if err != nil {
+			t, err = time.Parse("2006-01-02 15:04:05", hs)
+		}
+		if err == nil {
+			out[nodeID] = t
+		}
+	}
+	return out, rows.Err()
+}
+
 // NodeRecord represents a node from the database.
 type NodeRecord struct {
 	ID        string `json:"id"`
@@ -397,11 +522,16 @@ type NodeRecord struct {
 	Type      string `json:"type"`
 	Address   string `json:"address"`
 	PublicKey string `json:"public_key"`
+	// Status is "approved" or "pending" — see node_require_approval in
+	// system_settings. Nodes created while approval isn't required default
+	// straight to "approved", so this column changes nothing for installs
+	// that never turn the setting on.
+	Status string `json:"status"`
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]NodeRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, type, address, public_key FROM nodes`)
+		SELECT id, name, type, address, public_key, status FROM nodes`)
 	if err != nil {
 		return nil, err
 	}
@@ -410,10 +540,280 @@ func (s *Store) ListNodes(ctx context.Context) ([]NodeRecord, error) {
 	var nodes []NodeRecord
 	for rows.Next() {
 		var n NodeRecord
-		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &n.Address, &n.PublicKey); err != nil {
+		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &n.Address, &n.PublicKey, &n.Status); err != nil {
 			return nil, err
 		}
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()
+}
+
+// NodeStatRecord is one row from the node_stats table.
+type NodeStatRecord struct {
+	ID          string  `json:"id"`
+	CPUPercent  float64 `json:"cpu_percent"`
+	MemUsed     uint64  `json:"mem_used"`
+	MemTotal    uint64  `json:"mem_total"`
+	DiskUsed    uint64  `json:"disk_used"`
+	DiskTotal   uint64  `json:"disk_total"`
+	Load1       float64 `json:"load_1"`
+	Load5       float64 `json:"load_5"`
+	Load15      float64 `json:"load_15"`
+	RecordedAt  string  `json:"recorded_at"`
+}
+
+// SaveNodeStats inserts a stats row and prunes entries older than 24 hours.
+func (s *Store) SaveNodeStats(ctx context.Context, r NodeStatRecord) error {
+	q := fmt.Sprintf(`INSERT INTO node_stats
+		(id, cpu_percent, mem_used, mem_total, disk_used, disk_total, load_1, load_5, load_15, recorded_at)
+		VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)`,
+		s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9), s.ph(10))
+	if _, err := s.db.ExecContext(ctx, q,
+		r.ID, r.CPUPercent, r.MemUsed, r.MemTotal,
+		r.DiskUsed, r.DiskTotal, r.Load1, r.Load5, r.Load15, r.RecordedAt,
+	); err != nil {
+		return err
+	}
+	// Prune rows older than 24 hours
+	cutoff := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	s.db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM node_stats WHERE recorded_at < %s`, s.ph(1)), cutoff)
+	return nil
+}
+
+// LatestNodeStats returns the most recent stats row, or an error if none exist.
+func (s *Store) LatestNodeStats(ctx context.Context) (NodeStatRecord, error) {
+	q := `SELECT id, cpu_percent, mem_used, mem_total, disk_used, disk_total,
+	             load_1, load_5, load_15, recorded_at
+	      FROM node_stats ORDER BY recorded_at DESC LIMIT 1`
+	row := s.db.QueryRowContext(ctx, q)
+	var r NodeStatRecord
+	err := row.Scan(&r.ID, &r.CPUPercent, &r.MemUsed, &r.MemTotal,
+		&r.DiskUsed, &r.DiskTotal, &r.Load1, &r.Load5, &r.Load15, &r.RecordedAt)
+	return r, err
+}
+
+// ListNodeStatsHistory returns up to limit stats rows newest-first.
+func (s *Store) ListNodeStatsHistory(ctx context.Context, limit int) ([]NodeStatRecord, error) {
+	q := fmt.Sprintf(`SELECT id, cpu_percent, mem_used, mem_total, disk_used, disk_total,
+	                         load_1, load_5, load_15, recorded_at
+	                  FROM node_stats ORDER BY recorded_at DESC LIMIT %s`, s.ph(1))
+	rows, err := s.db.QueryContext(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeStatRecord
+	for rows.Next() {
+		var r NodeStatRecord
+		if err := rows.Scan(&r.ID, &r.CPUPercent, &r.MemUsed, &r.MemTotal,
+			&r.DiskUsed, &r.DiskTotal, &r.Load1, &r.Load5, &r.Load15, &r.RecordedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// WalCheckpoint issues a WAL checkpoint on SQLite to ensure a consistent snapshot
+// before a backup copy. Safe to call on PostgreSQL/MySQL — it does nothing.
+func (s *Store) WalCheckpoint(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(FULL)`)
+	return err
+}
+
+// ── Alert rules ───────────────────────────────────────────────────────────────
+
+// AlertRule is a single alerting condition.
+type AlertRule struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	Condition     string  `json:"condition"` // cpu_percent | mem_percent | disk_percent | node_offline | handshake_age
+	Threshold     float64 `json:"threshold"` // percent (0-100) or minutes depending on condition
+	Severity      string  `json:"severity"`  // info | warning | critical
+	Enabled       bool    `json:"enabled"`
+	SilencedUntil string  `json:"silenced_until,omitempty"` // RFC3339 or empty
+	CreatedAt     string  `json:"created_at"`
+}
+
+// AlertEvent is a fired (and possibly resolved) alert instance.
+type AlertEvent struct {
+	ID             string `json:"id"`
+	RuleID         string `json:"rule_id"`
+	RuleName       string `json:"rule_name"`
+	Severity       string `json:"severity"`
+	Message        string `json:"message"`
+	FiredAt        string `json:"fired_at"`
+	ResolvedAt     string `json:"resolved_at,omitempty"`
+	AcknowledgedAt string `json:"acknowledged_at,omitempty"`
+}
+
+func (s *Store) CreateAlertRule(ctx context.Context, r AlertRule) error {
+	q := fmt.Sprintf(`INSERT INTO alert_rules (id, name, condition, threshold, severity, enabled, silenced_until, created_at)
+		VALUES (%s,%s,%s,%s,%s,%s,%s,%s)`,
+		s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8))
+	silenced := nullableString(r.SilencedUntil)
+	_, err := s.db.ExecContext(ctx, q, r.ID, r.Name, r.Condition, r.Threshold, r.Severity, boolToInt(r.Enabled), silenced, r.CreatedAt)
+	return err
+}
+
+func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, condition, threshold, severity, enabled, silenced_until, created_at FROM alert_rules ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AlertRule
+	for rows.Next() {
+		var r AlertRule
+		var enabled int
+		var silenced *string
+		if err := rows.Scan(&r.ID, &r.Name, &r.Condition, &r.Threshold, &r.Severity, &enabled, &silenced, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.Enabled = enabled != 0
+		if silenced != nil {
+			r.SilencedUntil = *silenced
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateAlertRule(ctx context.Context, r AlertRule) error {
+	q := fmt.Sprintf(`UPDATE alert_rules SET name=%s, condition=%s, threshold=%s, severity=%s, enabled=%s, silenced_until=%s WHERE id=%s`,
+		s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7))
+	silenced := nullableString(r.SilencedUntil)
+	_, err := s.db.ExecContext(ctx, q, r.Name, r.Condition, r.Threshold, r.Severity, boolToInt(r.Enabled), silenced, r.ID)
+	return err
+}
+
+func (s *Store) DeleteAlertRule(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM alert_rules WHERE id=%s`, s.ph(1)), id)
+	return err
+}
+
+// ── Alert events ──────────────────────────────────────────────────────────────
+
+func (s *Store) InsertAlertEvent(ctx context.Context, e AlertEvent) error {
+	q := fmt.Sprintf(`INSERT INTO alert_events (id, rule_id, rule_name, severity, message, fired_at) VALUES (%s,%s,%s,%s,%s,%s)`,
+		s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6))
+	_, err := s.db.ExecContext(ctx, q, e.ID, e.RuleID, e.RuleName, e.Severity, e.Message, e.FiredAt)
+	return err
+}
+
+// OpenAlertEvent returns the most recent unresolved event for a rule, or sql.ErrNoRows.
+func (s *Store) OpenAlertEvent(ctx context.Context, ruleID string) (AlertEvent, error) {
+	q := fmt.Sprintf(`SELECT id, rule_id, rule_name, severity, message, fired_at FROM alert_events
+		WHERE rule_id=%s AND resolved_at IS NULL ORDER BY fired_at DESC LIMIT 1`, s.ph(1))
+	row := s.db.QueryRowContext(ctx, q, ruleID)
+	var e AlertEvent
+	err := row.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity, &e.Message, &e.FiredAt)
+	return e, err
+}
+
+func (s *Store) ResolveAlertEvent(ctx context.Context, eventID, resolvedAt string) error {
+	q := fmt.Sprintf(`UPDATE alert_events SET resolved_at=%s WHERE id=%s`, s.ph(1), s.ph(2))
+	_, err := s.db.ExecContext(ctx, q, resolvedAt, eventID)
+	return err
+}
+
+func (s *Store) AcknowledgeAlertEvent(ctx context.Context, eventID, ackedAt string) error {
+	q := fmt.Sprintf(`UPDATE alert_events SET acknowledged_at=%s WHERE id=%s`, s.ph(1), s.ph(2))
+	_, err := s.db.ExecContext(ctx, q, ackedAt, eventID)
+	return err
+}
+
+func (s *Store) ListAlertEvents(ctx context.Context, limit int) ([]AlertEvent, error) {
+	q := fmt.Sprintf(`SELECT id, rule_id, rule_name, severity, message, fired_at,
+		COALESCE(resolved_at,''), COALESCE(acknowledged_at,'')
+		FROM alert_events ORDER BY fired_at DESC LIMIT %s`, s.ph(1))
+	rows, err := s.db.QueryContext(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AlertEvent
+	for rows.Next() {
+		var e AlertEvent
+		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity, &e.Message, &e.FiredAt, &e.ResolvedAt, &e.AcknowledgedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ── File transfers ──────────────────────────────────────────────────────────
+// One row per (node, file) distribution attempt — a group target expands to
+// one row per member node, so status/errors are always tracked per-node even
+// when the original request named a group.
+
+type FileTransfer struct {
+	ID              string `json:"id"`
+	TargetType      string `json:"target_type"` // "node" | "group"
+	TargetID        string `json:"target_id"`
+	NodeID          string `json:"node_id"`
+	NodeName        string `json:"node_name"`
+	Filename        string `json:"filename"`
+	DestinationPath string `json:"destination_path"`
+	Permissions     string `json:"permissions"`
+	SizeBytes       int64  `json:"size_bytes"`
+	Status          string `json:"status"` // pending | in_progress | done | failed
+	Error           string `json:"error,omitempty"`
+	CreatedAt       string `json:"created_at"`
+	CompletedAt     string `json:"completed_at,omitempty"`
+}
+
+func (s *Store) CreateFileTransfer(ctx context.Context, t FileTransfer) error {
+	q := fmt.Sprintf(`INSERT INTO file_transfers
+		(id, target_type, target_id, node_id, node_name, filename, destination_path, permissions, size_bytes, status, created_at)
+		VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)`,
+		s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9), s.ph(10), s.ph(11))
+	_, err := s.db.ExecContext(ctx, q, t.ID, t.TargetType, t.TargetID, t.NodeID, t.NodeName, t.Filename,
+		t.DestinationPath, t.Permissions, t.SizeBytes, t.Status, t.CreatedAt)
+	return err
+}
+
+func (s *Store) UpdateFileTransferStatus(ctx context.Context, id, status, errMsg, completedAt string) error {
+	q := fmt.Sprintf(`UPDATE file_transfers SET status=%s, error=%s, completed_at=%s WHERE id=%s`,
+		s.ph(1), s.ph(2), s.ph(3), s.ph(4))
+	_, err := s.db.ExecContext(ctx, q, status, errMsg, nullableString(completedAt), id)
+	return err
+}
+
+func (s *Store) ListFileTransfers(ctx context.Context, limit int) ([]FileTransfer, error) {
+	q := fmt.Sprintf(`SELECT id, target_type, target_id, node_id, node_name, filename, destination_path,
+		permissions, size_bytes, status, error, created_at, COALESCE(completed_at,'')
+		FROM file_transfers ORDER BY created_at DESC LIMIT %s`, s.ph(1))
+	rows, err := s.db.QueryContext(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileTransfer
+	for rows.Next() {
+		var t FileTransfer
+		if err := rows.Scan(&t.ID, &t.TargetType, &t.TargetID, &t.NodeID, &t.NodeName, &t.Filename, &t.DestinationPath,
+			&t.Permissions, &t.SizeBytes, &t.Status, &t.Error, &t.CreatedAt, &t.CompletedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+func nullableString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

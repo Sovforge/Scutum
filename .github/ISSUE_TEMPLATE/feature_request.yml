@@ -1,0 +1,61 @@
+name: Feature Request
+description: Suggest a new feature or improvement for Scutum
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea that would make Scutum better? We'd love to hear it. Please describe the problem you're trying to solve — not just the solution — so we can find the best way to address it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or pain point driving this request.
+      placeholder: I'm trying to do X but currently have to Y instead...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you'd like to see added or changed.
+      placeholder: It would be great if Scutum could...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches or workarounds you've tried or thought about.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area does this affect?
+      multiple: true
+      options:
+        - Mesh networking / WireGuard
+        - Docker management
+        - Kubernetes management
+        - Helm chart
+        - Kubernetes operator
+        - Authentication / RBAC
+        - KMS / secrets
+        - Observability / metrics
+        - UI / frontend
+        - API
+        - Plugin system
+        - CI / release pipeline
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Mockups, links, related issues, or anything else that helps illustrate the request.

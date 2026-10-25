@@ -15,19 +15,46 @@ import (
 
 	"scutum/cmd/internal/clients"
 	"scutum/cmd/internal/models"
+	"scutum/cmd/internal/store"
 	"scutum/cmd/internal/utils"
 )
 
-type DockerHandler struct {
-	client    *clients.DockerClient
-	nodeStore nodeProxyStore
+// dockerGroupStore is the minimal group-membership lookup both the
+// group-targeted image and volume endpoints need. Set via SetGroupStore
+// rather than added to the constructor, so existing NewDockerHandler(ns,
+// secrets) call sites (main.go and several tests) don't need to change.
+type dockerGroupStore interface {
+	ListNodesInGroup(ctx context.Context, groupID string) ([]store.NodeRecord, error)
 }
 
-func NewDockerHandler(ns nodeProxyStore) *DockerHandler {
+type DockerHandler struct {
+	client     *clients.DockerClient
+	nodeStore  nodeProxyStore
+	secrets    secretsValueStore
+	groupStore dockerGroupStore
+}
+
+func NewDockerHandler(ns nodeProxyStore, secrets secretsValueStore) *DockerHandler {
 	return &DockerHandler{
 		client:    utils.GetPlatformClient(),
 		nodeStore: ns,
+		secrets:   secrets,
 	}
+}
+
+// SetGroupStore enables the group-targeted image and volume endpoints (list
+// across every node in a group). Those routes 500 with a clear message if
+// this was never called.
+func (h *DockerHandler) SetGroupStore(gs dockerGroupStore) {
+	h.groupStore = gs
+}
+
+// SetClient overrides the Docker client NewDockerHandler otherwise builds
+// via utils.GetPlatformClient(). Exported for tests, which need to point the
+// handler at a fake Docker daemon (httptest.Server) instead of a real
+// socket; production code never needs to call this.
+func (h *DockerHandler) SetClient(c *clients.DockerClient) {
+	h.client = c
 }
 
 // PostDeploy handles the deployment of a new container based on the user's request.
@@ -37,13 +64,31 @@ func (h *DockerHandler) PostDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if proxyRequest(w, r, body, h.nodeStore) {
-		return
-	}
 
 	var req models.DeployRequest
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Resolve "secret://name" env references before the body ever leaves the
+	// hub — a target node has no access to the hub's KMS, so this has to
+	// happen before proxying too, not just before the local deploy path below.
+	resolvedEnv, usedSecrets, err := ResolveSecretEnvRefs(r.Context(), h.secrets, req.Env)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.Env = resolvedEnv
+	if len(usedSecrets) > 0 {
+		if body, err = json.Marshal(req); err != nil {
+			http.Error(w, "re-encode resolved request: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		audit("SECRET_ACCESSED", r, "names", strings.Join(usedSecrets, ","), "context", "docker_deploy")
+	}
+
+	if proxyRequest(w, r, body, h.nodeStore) {
 		return
 	}
 
@@ -556,39 +601,71 @@ func (h *DockerHandler) HandleDeployCompose(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	resolvedBody, usedSecrets, err := ResolveSecretRefsText(r.Context(), h.secrets, body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	body = resolvedBody
+	if len(usedSecrets) > 0 {
+		audit("SECRET_ACCESSED", r, "names", strings.Join(usedSecrets, ","), "context", "compose_deploy")
+	}
+
 	if proxyRequest(w, r, body, h.nodeStore) {
 		return
 	}
 
-	tmp, err := os.CreateTemp("", "compose-*.yml")
-	if err != nil {
-		http.Error(w, "create temp file", http.StatusInternalServerError)
+	if _, err := exec.LookPath("docker"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "docker CLI not found in PATH; install docker on this node to use Compose deployments",
+		})
 		return
 	}
-	defer os.Remove(tmp.Name())
 
-	if _, err = tmp.Write(body); err != nil {
-		tmp.Close()
-		http.Error(w, "write temp file", http.StatusInternalServerError)
-		return
-	}
-	tmp.Close()
-
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, "docker", "compose", "-f", tmp.Name(), "up", "-d").CombinedOutput()
+	out, err := h.applyComposeLocally(r.Context(), body)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": string(out)})
+		json.NewEncoder(w).Encode(map[string]string{"error": out})
 		return
 	}
 
 	audit("COMPOSE_DEPLOYED", r)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"output": string(out)})
+	json.NewEncoder(w).Encode(map[string]string{"output": out})
+}
+
+// applyComposeLocally runs `docker compose up -d` against body on this node.
+// Pure exec logic, no HTTP concerns — shared by HandleDeployCompose (after
+// its proxy/secret-resolution/availability checks) and the GitOps
+// reconciler, which applies manifests in-process without an HTTP round trip.
+// Callers are responsible for checking docker availability first; on
+// failure the returned string is the command's combined output, suitable
+// to surface directly to a user or sync-history record.
+func (h *DockerHandler) applyComposeLocally(ctx context.Context, body []byte) (string, error) {
+	tmp, err := os.CreateTemp("", "compose-*.yml")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err = tmp.Write(body); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	tmp.Close()
+
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "docker", "compose", "-f", tmp.Name(), "up", "-d").CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("docker compose up -d failed")
+	}
+	return string(out), nil
 }
 
 // HandleContainerTraces scrapes the last N log lines of a container, extracts

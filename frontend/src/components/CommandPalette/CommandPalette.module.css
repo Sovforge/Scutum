@@ -1,0 +1,150 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(10, 8, 6, 0.55);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: min(14vh, 140px);
+  animation: backdrop-in 0.15s ease both;
+}
+
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.panel {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 1rem;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg), 0 30px 70px -30px color-mix(in srgb, var(--rust) 30%, transparent);
+  overflow: hidden;
+  animation: panel-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Same window-chrome bar as the Landing page's terminal showcase — the
+   palette should read as "another Scutum console", not an imported widget. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--ink-line);
+}
+.dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--ink-line-strong);
+}
+.barLabel {
+  margin-left: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--paper-dim);
+}
+
+.promptRow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--ink-line);
+}
+.prompt {
+  font-family: var(--mono);
+  color: var(--rust-bright);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 0.92rem;
+}
+.input::placeholder {
+  color: var(--paper-dim);
+}
+.esc {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: var(--paper-dim);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-xs);
+  padding: 0.15rem 0.4rem;
+}
+
+.results {
+  max-height: min(50vh, 380px);
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.groupLabel {
+  padding: 0.5rem 0.6rem 0.3rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+
+/* Left-accent-border selection, same visual language as StatCard's
+   colored left border — one consistent "this is selected/important" cue. */
+.result {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  border: none;
+  border-left: 3px solid transparent;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--paper-faint);
+  font-family: var(--body);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+.resultActive {
+  background: color-mix(in srgb, var(--rust) 12%, transparent);
+  border-left-color: var(--rust);
+  color: var(--paper);
+}
+
+.noResults {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--paper-dim);
+  font-size: 0.82rem;
+}

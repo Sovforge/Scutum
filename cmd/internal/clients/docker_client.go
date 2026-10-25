@@ -21,6 +21,19 @@ type DockerClient struct {
 	dial       DialFunc
 }
 
+// APIError preserves the Docker Engine API's actual HTTP status code, so
+// callers that need to distinguish e.g. 404 (not found) from 409 (conflict,
+// such as deleting an in-use volume) can do so instead of treating every
+// non-2xx response as a generic failure.
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("Docker API error: %d %s", e.StatusCode, e.Body)
+}
+
 // NewDockerClient creates a new DockerClient with the given HTTP client, base URL,
 // and a dial function used by Hijack to open raw connections to the daemon.
 func NewDockerClient(httpClient *http.Client, baseurl string, dial DialFunc) *DockerClient {
@@ -54,7 +67,8 @@ func (c *DockerClient) Do(method, path string, body interface{}, out interface{}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("Docker API error: %s", resp.Status)
+		respBody, _ := io.ReadAll(resp.Body)
+		return &APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	if out != nil {
@@ -79,6 +93,40 @@ func (c *DockerClient) DoStream(method, path string, body interface{}) (io.ReadC
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("Docker API error: %s", resp.Status)
+	}
+
+	return resp.Body, nil
+}
+
+// DoStreamWithHeaders is DoStream with additional request headers — needed
+// for authenticated image pulls, which pass registry credentials via the
+// X-Registry-Auth header rather than the request body.
+func (c *DockerClient) DoStreamWithHeaders(method, path string, body interface{}, headers map[string]string) (io.ReadCloser, error) {
+	var bodyReader io.Reader
+	if body != nil {
+		data, _ := json.Marshal(body)
+		bodyReader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequest(method, c.baseurl+path, bodyReader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.httpClient.Do(req)

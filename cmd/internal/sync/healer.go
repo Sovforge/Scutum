@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
@@ -113,6 +114,7 @@ type Healer struct {
 	backoffs         map[string]time.Duration
 	lastAttemptAt    map[string]time.Time
 	lastUsedEndpoint map[string]string // key: "ifaceName:pubkey"
+	lastReAddAt      map[string]time.Time // key: "ifaceName:pubkey"
 	cancel           context.CancelFunc
 	stopped          sync.WaitGroup
 }
@@ -127,6 +129,7 @@ func NewHealer(cfg HealerConfig, wgCheck WGChecker) *Healer {
 		backoffs:         make(map[string]time.Duration),
 		lastAttemptAt:    make(map[string]time.Time),
 		lastUsedEndpoint: make(map[string]string),
+		lastReAddAt:      make(map[string]time.Time),
 	}
 }
 
@@ -261,20 +264,43 @@ func (h *Healer) healPeer(ctx context.Context, peer WGPeer) {
 		peerKey := peer.IfaceName + ":" + peer.PublicKey
 		h.mu.Lock()
 		lastEP := h.lastUsedEndpoint[peerKey]
+		lastReAdd := h.lastReAddAt[peerKey]
 		h.mu.Unlock()
 
-		if freshEP == lastEP {
-			// Endpoint unchanged since last re-add; WireGuard's keepalive will learn
-			// the real endpoint from incoming packets — don't overwrite it.
-			h.cfg.Logger.Warn("wg peer handshake stale",
-				"iface", peer.IfaceName,
-				"peer", safeTruncate(peer.PublicKey, 8),
-				"age", age.Round(time.Second),
-			)
-			return
+		// Determine if the endpoint uses a domain name instead of a raw IP address.
+		// If it's a domain name, we want to periodically re-add the peer to force DNS re-resolution.
+		var isDNS bool
+		if host, _, err := net.SplitHostPort(freshEP); err == nil {
+			isDNS = net.ParseIP(host) == nil
+		} else {
+			isDNS = net.ParseIP(freshEP) == nil
 		}
 
-		// Endpoint was updated by the register-endpoint mechanism — re-add safely.
+		if freshEP == lastEP {
+			if !isDNS {
+				// Endpoint unchanged since last re-add; WireGuard's keepalive will learn
+				// the real endpoint from incoming packets — don't overwrite it.
+				h.cfg.Logger.Warn("wg peer handshake stale",
+					"iface", peer.IfaceName,
+					"peer", safeTruncate(peer.PublicKey, 8),
+					"age", age.Round(time.Second),
+				)
+				return
+			}
+
+			// For DNS endpoints, rate-limit re-resolution/re-adds to once every 5 minutes.
+			if time.Since(lastReAdd) < 5*time.Minute {
+				h.cfg.Logger.Warn("wg peer handshake stale (DNS endpoint backoff active)",
+					"iface", peer.IfaceName,
+					"peer", safeTruncate(peer.PublicKey, 8),
+					"age", age.Round(time.Second),
+					"endpoint", freshEP,
+				)
+				return
+			}
+		}
+
+		// Endpoint was updated by the register-endpoint mechanism or needs a DNS re-resolve — re-add safely.
 		updated := peer
 		updated.Endpoint = freshEP
 		if err := h.wgCheck.ReAddPeer(ctx, updated); err != nil {
@@ -285,9 +311,12 @@ func (h *Healer) healPeer(ctx context.Context, peer WGPeer) {
 			)
 			return
 		}
+
 		h.mu.Lock()
 		h.lastUsedEndpoint[peerKey] = freshEP
+		h.lastReAddAt[peerKey] = time.Now()
 		h.mu.Unlock()
+
 		h.cfg.Logger.Info("wg peer re-added with updated endpoint",
 			"iface", peer.IfaceName,
 			"peer", safeTruncate(peer.PublicKey, 8),

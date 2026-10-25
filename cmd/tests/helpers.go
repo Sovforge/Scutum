@@ -143,6 +143,10 @@ func (m *mockWG) UpdatePeerEndpoint(iface, publicKey, endpoint string) error {
 	return nil
 }
 
+func (m *mockWG) GetPeerEndpoint(iface, publicKey string) (string, error) {
+	return "", nil
+}
+
 type mockFailWGService struct{}
 
 func (m *mockFailWGService) AddPeer(ifaceName, publicKey, endpoint, allowedIPs string, keepalive int) error {
@@ -159,6 +163,10 @@ func (m *mockFailWGService) GetDump(ifaceName string) (string, error) {
 
 func (m *mockFailWGService) UpdatePeerEndpoint(ifaceName, publicKey, endpoint string) error {
 	return fmt.Errorf("wg failure")
+}
+
+func (m *mockFailWGService) GetPeerEndpoint(ifaceName, publicKey string) (string, error) {
+	return "", fmt.Errorf("wg failure")
 }
 
 type mockNodeProxyStore struct{}

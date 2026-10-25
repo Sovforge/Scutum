@@ -1,0 +1,231 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 0 1.25rem;
+}
+
+/* Only in TV mode: fill the parent's actual height (TV's .topologyWrap is
+   a definite-height flex:1 area) so the globe can grow by height too, not
+   just width — a fixed square viewBox means width alone can't fill a tall
+   container. Left off by default so Dashboard/Network's content-sized
+   Section cards render exactly as before. */
+.wrapFill {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.wrapFill .stage {
+  flex: 1;
+  min-height: 0;
+}
+.wrapFill .svg {
+  height: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.svg {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  animation: flicker 5s ease-in-out infinite;
+}
+.svg:active {
+  cursor: grabbing;
+}
+
+/* Subtle, irregular brightness wobble — just enough to read as an unstable
+   projection, not enough to be distracting or annoying to look at. */
+@keyframes flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  6% {
+    opacity: 0.94;
+  }
+  8% {
+    opacity: 1;
+  }
+  52% {
+    opacity: 1;
+  }
+  54% {
+    opacity: 0.9;
+  }
+  57% {
+    opacity: 1;
+  }
+}
+
+/* ── Hologram projector base ─────────────────────────────────────── */
+
+.pedestal {
+  fill: var(--ink-raised);
+  stroke: var(--ink-line-strong);
+  stroke-width: 1.5;
+}
+.pedestalRim {
+  fill: none;
+  stroke: var(--blueprint);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+.emitter {
+  fill: var(--blueprint-bright);
+}
+
+.scanlines {
+  opacity: 0.05;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  animation: scan-drift 3s linear infinite;
+}
+@keyframes scan-drift {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(4px);
+  }
+}
+
+.zoomControls {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.zoomControls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-xs);
+  color: var(--paper-dim);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.zoomControls button:hover {
+  color: var(--paper);
+  border-color: var(--paper-dim);
+}
+
+.graticule path {
+  fill: none;
+  stroke: var(--ink-line-strong);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
+.limb {
+  pointer-events: none;
+}
+
+.outline {
+  fill: none;
+  stroke: var(--ink-line-strong);
+  stroke-width: 1.5;
+}
+
+.edge {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  opacity: 0.8;
+  animation: dash 6s linear infinite;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -80;
+  }
+}
+
+.node {
+  stroke: var(--ink-raised);
+  stroke-width: 1.5;
+  transition: opacity 0.2s ease;
+}
+
+.nodeBack .node {
+  opacity: 0.3;
+}
+
+.hubNode {
+  animation: pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  50% {
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--blueprint-bright) 55%, transparent));
+  }
+}
+
+.label {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--paper-dim);
+  text-anchor: middle;
+}
+
+.hubLabel {
+  fill: var(--paper);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.hint {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--paper-dim);
+  opacity: 0.7;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1.25rem;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--paper-faint);
+}
+
+.legendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

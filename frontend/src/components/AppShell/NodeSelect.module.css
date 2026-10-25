@@ -1,0 +1,132 @@
+.wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--ink-line-strong);
+  background: var(--ink);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  color: var(--paper-faint);
+  font-family: var(--body);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.trigger:hover {
+  border-color: var(--paper-dim);
+  background: var(--ink-raised);
+}
+
+.icon {
+  color: var(--blueprint-bright);
+  flex-shrink: 0;
+}
+
+.label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.chevron,
+.chevronOpen {
+  color: var(--paper-dim);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+@media (max-width: 640px) {
+  .label {
+    display: none;
+  }
+  .trigger {
+    padding: 0.35rem;
+  }
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: none;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 30;
+  min-width: 200px;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  padding: 0.4rem;
+  box-shadow: var(--shadow-lg);
+  transform-origin: top left;
+  animation: menu-in 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--paper-faint);
+  font-family: var(--body);
+  font-size: 0.82rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.option:hover {
+  background: color-mix(in srgb, var(--paper) 8%, transparent);
+  color: var(--paper);
+}
+.optionActive {
+  color: var(--blueprint-bright);
+}
+
+.optionLabel {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.optionRole {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--paper-dim);
+  text-transform: uppercase;
+}
+
+.divider {
+  height: 1px;
+  background: var(--ink-line);
+  margin: 0.3rem 0.2rem;
+}

@@ -1,0 +1,49 @@
+## API / Web UI service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "scutum.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scutum.labels" . | nindent 4 }}
+  {{- with .Values.service.api.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.api.type }}
+  ports:
+    - name: api
+      port: {{ .Values.service.api.port }}
+      targetPort: api
+      protocol: TCP
+  selector:
+    {{- include "scutum.selectorLabels" . | nindent 4 }}
+---
+{{- if .Values.wireguard.enabled }}
+## WireGuard UDP service — must be reachable by remote nodes.
+## Remote nodes register their endpoint against this address:port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "scutum.fullname" . }}-wireguard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scutum.labels" . | nindent 4 }}
+  {{- with .Values.service.wireguard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.wireguard.type }}
+  ports:
+    - name: wireguard
+      port: {{ .Values.service.wireguard.port }}
+      targetPort: wireguard
+      protocol: UDP
+      {{- if .Values.service.wireguard.nodePort }}
+      nodePort: {{ .Values.service.wireguard.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "scutum.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -1,0 +1,314 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Report header ──────────────────────────────────────────────── */
+
+.reportHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reportTitle {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+.sectionActions {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.manifestNo {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+
+.calloutWrap {
+  margin: 1rem 1.15rem 0;
+}
+
+/* ── Stat strip ─────────────────────────────────────────────────── */
+
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+.statCard {
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.statValue {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--paper);
+}
+.statLabel {
+  font-size: 0.72rem;
+  color: var(--paper-dim);
+}
+
+/* ── Toolbar ────────────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.searchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.searchIcon {
+  position: absolute;
+  left: 0.55rem;
+  color: var(--paper-dim);
+  pointer-events: none;
+}
+.searchInput {
+  background: var(--ink);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.65rem 0.35rem 1.8rem;
+  color: var(--paper);
+  font-size: 0.8rem;
+  font-family: inherit;
+  width: 160px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.searchInput:focus {
+  border-color: var(--rust);
+}
+.filterGroup {
+  display: flex;
+  gap: 0.25rem;
+}
+.filterBtn {
+  background: none;
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--paper-dim);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.filterBtn:hover {
+  color: var(--paper);
+}
+.filterBtnActive {
+  color: var(--rust-bright);
+  border-color: var(--rust);
+  background: color-mix(in srgb, var(--rust) 12%, transparent);
+}
+
+.loadingRow {
+  padding: 1rem 1.15rem;
+  font-size: 0.82rem;
+  color: var(--paper-dim);
+}
+
+/* ── Enroll / group forms ───────────────────────────────────────── */
+
+.enrollForm {
+  padding: 1rem 1.15rem;
+  border-bottom: 1px solid var(--ink-line);
+  margin-bottom: 0.25rem;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+/* ── Hub key display ────────────────────────────────────────────── */
+
+.hubKeyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: var(--ink);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+}
+.hubKeyLabel {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--paper-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hubKeyHint {
+  font-size: 0.72rem;
+  color: var(--paper-faint);
+  line-height: 1.5;
+}
+.hubKeyHint code {
+  font-family: var(--mono);
+  color: var(--rust-bright);
+}
+.keyBlock {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--ink-deep, var(--ink));
+  border: 1px solid var(--ink-line);
+  border-radius: var(--radius-xs);
+  padding: 0.45rem 0.65rem;
+}
+.keyVal {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--paper-faint);
+  word-break: break-all;
+  flex: 1;
+}
+
+/* ── Node groups ────────────────────────────────────────────────── */
+
+.groupList {
+  display: flex;
+  flex-direction: column;
+}
+.groupRow {
+  border-bottom: 1px solid var(--ink-line);
+}
+.groupRow:last-child {
+  border-bottom: none;
+}
+.groupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1.15rem;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.groupHeader:hover {
+  background: color-mix(in srgb, var(--paper) 4%, transparent);
+}
+.groupHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--paper-dim);
+}
+.groupHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.groupName {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--paper);
+}
+.groupDesc {
+  font-size: 0.78rem;
+  color: var(--paper-dim);
+}
+.groupCount {
+  font-size: 0.72rem;
+  color: var(--paper-dim);
+  font-family: var(--mono);
+}
+.groupMembers {
+  padding: 0.5rem 1.15rem 0.85rem 2.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.groupEmpty {
+  font-size: 0.78rem;
+  color: var(--paper-faint);
+  padding: 0.25rem 0;
+}
+.groupMember {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--ink-line);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+}
+.groupMemberName {
+  flex: 1;
+  color: var(--paper);
+  font-weight: 500;
+}
+.groupAddRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+.groupSelect {
+  flex: 1;
+  max-width: 260px;
+  background: var(--ink);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--paper);
+  font-family: inherit;
+}
+
+/* ── Table extras ───────────────────────────────────────────────── */
+
+.labels {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.label {
+  font-size: 0.68rem;
+  color: var(--paper-dim);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.rowActions {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.removeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--paper-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.approveBtn:hover {
+  color: var(--blueprint-bright);
+  background: color-mix(in srgb, var(--blueprint) 15%, transparent);
+}
+.removeBtn:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}

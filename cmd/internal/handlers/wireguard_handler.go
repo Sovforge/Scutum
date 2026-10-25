@@ -19,6 +19,7 @@ import (
 
 type wgNodeStore interface {
 	ListNodes(ctx context.Context) ([]store.NodeRecord, error)
+	GetSystemSettings(ctx context.Context) (store.SystemSettings, error)
 }
 
 type wgKeyStore interface {
@@ -83,6 +84,11 @@ func (h *WireGuardHandler) HandleAddPeer(w http.ResponseWriter, r *http.Request)
 	keepalive := req.PersistentKeepalive
 	if keepalive <= 0 {
 		keepalive = 25
+		if h.nodeStore != nil {
+			if settings, err := h.nodeStore.GetSystemSettings(r.Context()); err == nil && settings.MeshKeepaliveSeconds > 0 {
+				keepalive = settings.MeshKeepaliveSeconds
+			}
+		}
 	}
 	if err := h.wg.AddPeer(h.IfaceName, req.PublicKey, req.Endpoint, req.AllowedIPs, keepalive); err != nil {
 		http.Error(w, fmt.Sprintf("wg error: %v", err), http.StatusInternalServerError)

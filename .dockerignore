@@ -34,3 +34,10 @@ tests.test
 
 # Test files (not needed for build)
 cmd/tests/
+
+# Frontend — the Docker build runs its own `npm ci` in a clean stage; a
+# host-local frontend/node_modules or frontend/dist would otherwise get
+# copied in by `COPY frontend/ ./` and could clobber that fresh install
+# with mismatched-platform binaries.
+frontend/node_modules/
+frontend/dist/

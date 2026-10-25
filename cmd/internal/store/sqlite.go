@@ -46,9 +46,70 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE system_logs ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN span_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE system_logs ADD COLUMN attributes TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN email TEXT`,
+		// 'approved' preserves existing behavior for nodes created before
+		// approval workflows existed, and for any node created while
+		// node_require_approval is off.
+		`ALTER TABLE nodes ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'`,
 	} {
 		db.ExecContext(ctx, q) // intentionally ignore "duplicate column" errors
 	}
+
+	// alert_rules and alert_events tables
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alert_rules (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		condition      TEXT NOT NULL,
+		threshold      REAL NOT NULL DEFAULT 0,
+		severity       TEXT NOT NULL DEFAULT 'warning',
+		enabled        INTEGER NOT NULL DEFAULT 1,
+		silenced_until DATETIME,
+		created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alert_events (
+		id              TEXT PRIMARY KEY,
+		rule_id         TEXT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+		rule_name       TEXT NOT NULL,
+		severity        TEXT NOT NULL,
+		message         TEXT NOT NULL,
+		fired_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		resolved_at     DATETIME,
+		acknowledged_at DATETIME
+	)`)
+
+	// file_transfers — one row per (node, file) distribution attempt, whether
+	// the original request targeted a single node or a whole group.
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS file_transfers (
+		id               TEXT PRIMARY KEY,
+		target_type      TEXT NOT NULL,
+		target_id        TEXT NOT NULL,
+		node_id          TEXT NOT NULL,
+		node_name        TEXT NOT NULL,
+		filename         TEXT NOT NULL,
+		destination_path TEXT NOT NULL,
+		permissions      TEXT NOT NULL DEFAULT '0644',
+		size_bytes       INTEGER NOT NULL DEFAULT 0,
+		status           TEXT NOT NULL DEFAULT 'pending',
+		error            TEXT NOT NULL DEFAULT '',
+		created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		completed_at     DATETIME
+	)`)
+
+	// node_stats table — rolling 24-hour resource metric history
+	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS node_stats (
+		id           TEXT PRIMARY KEY,
+		cpu_percent  REAL NOT NULL DEFAULT 0,
+		mem_used     INTEGER NOT NULL DEFAULT 0,
+		mem_total    INTEGER NOT NULL DEFAULT 0,
+		disk_used    INTEGER NOT NULL DEFAULT 0,
+		disk_total   INTEGER NOT NULL DEFAULT 0,
+		load_1       REAL NOT NULL DEFAULT 0,
+		load_5       REAL NOT NULL DEFAULT 0,
+		load_15      REAL NOT NULL DEFAULT 0,
+		recorded_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
 
 	// otel_metrics table (new — safe to CREATE IF NOT EXISTS)
 	db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS otel_metrics (
@@ -72,13 +133,13 @@ func (d SQLiteDriver) Migrate(ctx context.Context, db *sql.DB) error {
 			CREATE TABLE nodes (
 				id          TEXT PRIMARY KEY,
 				name        TEXT NOT NULL,
-				type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
+				type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 				address     TEXT NOT NULL,
 				public_key  TEXT NOT NULL,
 				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 			INSERT INTO nodes SELECT id, name,
-				CASE type WHEN 'peer' THEN 'remote' WHEN 'edge' THEN 'combined' ELSE type END,
+				CASE type WHEN 'peer' THEN 'remote' WHEN 'edge' THEN 'remote' WHEN 'combined' THEN 'remote' ELSE type END,
 				address, public_key, created_at FROM nodes_old;
 			DROP TABLE nodes_old;
 		`); err != nil {
@@ -93,9 +154,10 @@ const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS nodes (
 			id          TEXT PRIMARY KEY,
 			name        TEXT NOT NULL,
-			type        TEXT NOT NULL CHECK(type IN ('hub','remote','combined')),
+			type        TEXT NOT NULL CHECK(type IN ('hub','remote')),
 			address     TEXT NOT NULL,
 			public_key  TEXT NOT NULL,
+			status      TEXT NOT NULL DEFAULT 'approved',
 			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -188,9 +250,65 @@ CREATE TABLE IF NOT EXISTS nodes (
 			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS app_secrets (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL UNIQUE,
+			description TEXT NOT NULL DEFAULT '',
+			created_by  TEXT NOT NULL DEFAULT '',
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_by  TEXT NOT NULL DEFAULT '',
+			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS gitops_sources (
+			id                     TEXT PRIMARY KEY,
+			name                   TEXT NOT NULL,
+			repo_url               TEXT NOT NULL,
+			branch                 TEXT NOT NULL DEFAULT 'main',
+			path                   TEXT NOT NULL DEFAULT '',
+			manifest_type          TEXT NOT NULL DEFAULT 'compose',
+			target_node_id         TEXT NOT NULL DEFAULT '',
+			username               TEXT NOT NULL DEFAULT '',
+			poll_interval_seconds  INTEGER NOT NULL DEFAULT 60,
+			enabled                INTEGER NOT NULL DEFAULT 1,
+			last_synced_at         DATETIME,
+			last_commit_sha        TEXT NOT NULL DEFAULT '',
+			last_content_hash      TEXT NOT NULL DEFAULT '',
+			last_status            TEXT NOT NULL DEFAULT '',
+			last_error             TEXT NOT NULL DEFAULT '',
+			created_by             TEXT NOT NULL DEFAULT '',
+			created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_by             TEXT NOT NULL DEFAULT '',
+			updated_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS gitops_sync_events (
+			id           TEXT PRIMARY KEY,
+			source_id    TEXT NOT NULL REFERENCES gitops_sources(id) ON DELETE CASCADE,
+			commit_sha   TEXT NOT NULL DEFAULT '',
+			status       TEXT NOT NULL,
+			message      TEXT NOT NULL DEFAULT '',
+			triggered_by TEXT NOT NULL DEFAULT '',
+			started_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			finished_at  DATETIME
+		);
+
 		CREATE TABLE IF NOT EXISTS setup_state (
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS system_settings (
+			id                       INTEGER PRIMARY KEY CHECK(id = 1),
+			cluster_name             TEXT NOT NULL DEFAULT '',
+			region                   TEXT NOT NULL DEFAULT '',
+			log_level                TEXT NOT NULL DEFAULT 'info',
+			mesh_mtu                 INTEGER NOT NULL DEFAULT 1420,
+			mesh_keepalive_s         INTEGER NOT NULL DEFAULT 25,
+			node_default_role        TEXT NOT NULL DEFAULT 'remote',
+			node_require_approval    INTEGER NOT NULL DEFAULT 0,
+			auth_require_mfa         INTEGER NOT NULL DEFAULT 0,
+			auth_session_timeout_min INTEGER NOT NULL DEFAULT 1440
 		);
 
 		CREATE TABLE IF NOT EXISTS storage_backends (
@@ -253,6 +371,101 @@ CREATE TABLE IF NOT EXISTS nodes (
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		-- single-row table enforced by constant primary key
 		id         INTEGER PRIMARY KEY CHECK(id = 1)
+	);
+
+	CREATE TABLE IF NOT EXISTS federation_peers (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		hub_url        TEXT NOT NULL,
+		wg_endpoint    TEXT NOT NULL,
+		wg_public_key  TEXT NOT NULL,
+		mesh_cidr      TEXT NOT NULL,
+		allowed_ips    TEXT NOT NULL DEFAULT '',
+		status         TEXT NOT NULL DEFAULT 'pending',
+		last_seen      DATETIME,
+		created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS node_labels (
+		node_id   TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		label_key TEXT NOT NULL,
+		value     TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (node_id, label_key)
+	);
+
+	CREATE TABLE IF NOT EXISTS node_groups (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL UNIQUE,
+		description TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS webhook_configs (
+		id         TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		url        TEXT NOT NULL,
+		secret     TEXT NOT NULL DEFAULT '',
+		events     TEXT NOT NULL DEFAULT '[]',
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS scim_tokens (
+		id          TEXT PRIMARY KEY,
+		token_hash  TEXT NOT NULL UNIQUE,
+		description TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS node_group_members (
+		group_id TEXT NOT NULL REFERENCES node_groups(id) ON DELETE CASCADE,
+		node_id  TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		PRIMARY KEY (group_id, node_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS network_policies (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		enabled     INTEGER NOT NULL DEFAULT 1,
+		priority    INTEGER NOT NULL DEFAULT 100,
+		action      TEXT NOT NULL DEFAULT 'deny',
+		protocol    TEXT NOT NULL DEFAULT 'any',
+		port        TEXT NOT NULL DEFAULT '',
+		src_type    TEXT NOT NULL DEFAULT 'any',
+		src_id      TEXT NOT NULL DEFAULT '',
+		dst_type    TEXT NOT NULL DEFAULT 'any',
+		dst_id      TEXT NOT NULL DEFAULT '',
+		created_by  TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_by  TEXT NOT NULL DEFAULT '',
+		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS network_policy_settings (
+		id           INTEGER PRIMARY KEY CHECK (id = 1),
+		default_deny INTEGER NOT NULL DEFAULT 0,
+		updated_by   TEXT NOT NULL DEFAULT '',
+		updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS audit_forwarders (
+		id         TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		url        TEXT NOT NULL,
+		format     TEXT NOT NULL DEFAULT 'json',
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS sso_identities (
+		id         TEXT PRIMARY KEY,
+		user_id    TEXT NOT NULL REFERENCES users(id),
+		provider   TEXT NOT NULL,
+		subject    TEXT NOT NULL,
+		email      TEXT,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(provider, subject)
 	);
 
 	PRAGMA journal_mode=WAL;

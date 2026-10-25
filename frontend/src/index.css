@@ -1,0 +1,323 @@
+@import './theme.css';
+
+:root {
+  /* Aliased onto the generated M3 palette (theme.css) so every page draws
+     from one seeded source instead of hand-picked hex values. */
+  --ink: var(--md-surface);
+  --ink-raised: var(--md-surface-container-high);
+  --ink-line: var(--md-outline-variant);
+  --ink-line-strong: var(--md-outline);
+  --paper: var(--md-on-surface);
+  --paper-dim: var(--md-on-surface-variant);
+  --paper-faint: color-mix(in srgb, var(--md-on-surface-variant) 80%, transparent);
+
+  --rust: var(--md-primary);
+  --rust-bright: color-mix(in srgb, var(--md-primary) 100%, white 18%);
+  --on-rust: var(--md-on-primary);
+  /* For accents placed on the always-light "paper" band (.manifest) — the
+     dark-mode primary is a pale tone meant for dark surfaces and reads too
+     faint there, so use the opposite-scheme (dark, saturated) primary tone. */
+  --rust-on-paper: var(--md-inverse-primary);
+  --blueprint: var(--md-secondary);
+  --blueprint-bright: color-mix(in srgb, var(--md-secondary) 100%, white 18%);
+  --danger: var(--md-error);
+  --on-danger: var(--md-on-error);
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 22px;
+  /* Barely-there elevation, layered with the existing hairline border —
+     not a drop-shadow effect, just enough to lift a surface off the page. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 1px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.06), 0 8px 16px -8px rgba(0, 0, 0, 0.14);
+  --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.08), 0 20px 40px -16px rgba(0, 0, 0, 0.22);
+
+  --display: 'Fraunces', ui-serif, Georgia, serif;
+  --body: 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  color-scheme: dark;
+  font-family: var(--body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Scoped light-mode override — applied to the app shell root (not <html>),
+   since the marketing pages (Landing/Setup/Login/About/FAQ/TV) were designed
+   dark-only on purpose and shouldn't flip with the app's theme toggle.
+
+   theme.css's own [data-theme='light'] block overrides the raw --md-*
+   tokens, but a custom property's *computed* value is resolved (var()
+   substituted) at the element where it's declared, then that resolved
+   value is what inherits — not a live reference. Since the aliases above
+   are declared once on :root (<html>), redeclaring --md-surface etc.
+   further down the tree on .shell does NOT retroactively re-resolve --ink.
+   The alias mapping itself has to be redeclared at the same scope as the
+   override, so it re-resolves against the overridden tokens right here. */
+[data-theme='light'] {
+  --ink: var(--md-surface);
+  --ink-raised: var(--md-surface-container-high);
+  --ink-line: var(--md-outline-variant);
+  --ink-line-strong: var(--md-outline);
+  --paper: var(--md-on-surface);
+  --paper-dim: var(--md-on-surface-variant);
+  --paper-faint: color-mix(in srgb, var(--md-on-surface-variant) 80%, transparent);
+
+  --rust: var(--md-primary);
+  --rust-bright: color-mix(in srgb, var(--md-primary) 100%, white 18%);
+  --on-rust: var(--md-on-primary);
+  --rust-on-paper: var(--md-inverse-primary);
+  --blueprint: var(--md-secondary);
+  --blueprint-bright: color-mix(in srgb, var(--md-secondary) 100%, white 18%);
+  --danger: var(--md-error);
+  --on-danger: var(--md-on-error);
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--rust-bright);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+#root {
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 500;
+  color: var(--paper);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* ── shared primitives (brand mark, eyebrow, buttons) ──────────────
+   Reused across the landing page and the setup/login screens it
+   leads into, so they read as one continuous product. */
+
+.brand-mark {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.brand-mark__logo {
+  width: 1.7rem;
+  height: 1.7rem;
+  object-fit: contain;
+}
+
+.brand-mark__word {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  font-size: 0.85rem;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--rust-bright);
+  margin: 0 0 1rem;
+}
+
+.eyebrow--dark {
+  color: var(--rust);
+}
+
+/* Rotated "classification stamp" motif from the Landing/About dossier
+   pages, promoted here so app pages can reach for the same device instead
+   of inventing a new one per page. */
+.stamp {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--blueprint-bright);
+  border: 1px solid var(--blueprint);
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--radius-sm);
+  transform: rotate(-2deg);
+  white-space: nowrap;
+}
+.stamp--alt {
+  transform: rotate(1.5deg);
+  color: var(--rust-bright);
+  border-color: var(--rust);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  padding: 0.85rem 1.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: none;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn--primary {
+  background: var(--rust);
+  color: var(--on-rust);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--rust) 35%, transparent), 0 10px 24px -8px color-mix(in srgb, var(--rust) 55%, transparent);
+}
+.btn--primary:hover {
+  background: var(--rust-bright);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--rust) 40%, transparent), 0 14px 32px -8px color-mix(in srgb, var(--rust) 60%, transparent);
+}
+
+.btn--ghost {
+  border-color: var(--ink-line-strong);
+  color: var(--paper);
+}
+.btn--ghost:hover {
+  border-color: var(--paper-dim);
+  background: rgba(239, 231, 216, 0.05);
+}
+
+.btn--block {
+  width: 100%;
+  justify-content: center;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 1.1rem;
+}
+
+.field label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+
+.field input,
+.field select {
+  font-family: var(--body);
+  font-size: 0.92rem;
+  color: var(--paper);
+  background: var(--ink);
+  border: 1px solid var(--ink-line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.85rem;
+  outline: none;
+  transition: border-color 0.15s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+.field input:focus,
+.field select:focus {
+  border-color: var(--rust-bright);
+}
+
+/* Custom scrollbar — a small but constant reminder this is Scutum, not a
+   generic template with the OS default. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--rust) 45%, var(--ink-line-strong));
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--rust);
+  background-clip: padding-box;
+}
+* {
+  scrollbar-color: color-mix(in srgb, var(--rust) 45%, var(--ink-line-strong)) transparent;
+  scrollbar-width: thin;
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Table cell text utilities — used alongside components/ui/Table, which
+   only owns the table shell (wrapper, th, td) since column content varies
+   too much per page for a rigid generic component. */
+.cell-name {
+  color: var(--paper);
+  font-weight: 600;
+}
+.cell-muted {
+  color: var(--paper-dim);
+}
