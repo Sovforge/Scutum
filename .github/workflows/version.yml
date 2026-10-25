@@ -19,7 +19,7 @@ jobs:
     steps:
       # The PR merge already landed develop's commits on main — this picks
       # up main post-merge rather than merging again here.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: main
