@@ -2,7 +2,7 @@ module scutum
 
 go 1.25.0
 
-require github.com/tetratelabs/wazero v1.11.0
+require github.com/tetratelabs/wazero v1.12.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
