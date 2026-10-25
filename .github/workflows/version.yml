@@ -14,7 +14,8 @@ jobs:
     if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'develop'
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # push commits + tag
+      contents: write        # push the release branch + tag
+      pull-requests: write   # open and merge the release PR
 
     steps:
       # The PR merge already landed develop's commits on main — this picks
@@ -30,6 +31,12 @@ jobs:
       # "type!:" subject → major, any "feat:" → minor, otherwise patch. No
       # third-party action — this repo's commit history already follows the
       # convention closely enough to trust it.
+      #
+      # A squash merge (this ruleset only allows squash merges to main) puts
+      # every original commit's subject+body into the squash commit's body as
+      # a "* <subject>\n\n<body>" bullet list, not as separate commits — so
+      # the conventional-commit prefix no longer sits at the true start of
+      # the line. The `^[-*]?\s*` prefix below accounts for that bullet.
       - name: Determine version bump
         id: bump
         run: |
@@ -43,9 +50,9 @@ jobs:
 
           LOG=$(git log "$RANGE" --pretty=format:'%s%n%b')
 
-          if echo "$LOG" | grep -qE '(^|[^a-zA-Z])BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:'; then
+          if echo "$LOG" | grep -qE '(^|[^a-zA-Z])BREAKING CHANGE|^[-*]?\s*[a-z]+(\([^)]*\))?!:'; then
             BUMP=major
-          elif echo "$LOG" | grep -qE '^feat(\([^)]*\))?:'; then
+          elif echo "$LOG" | grep -qE '^[-*]?\s*feat(\([^)]*\))?:'; then
             BUMP=minor
           else
             BUMP=patch
@@ -103,16 +110,35 @@ jobs:
           sed -i "s|^version:.*|version: $VERSION|"         helm/scutum/Chart.yaml
           sed -i "s|^appVersion:.*|appVersion: \"$VERSION\"|" helm/scutum/Chart.yaml
 
-      # ── Commit, tag, and push to main ───────────────────────────────────────
-      - name: Commit, tag, and push to main
+      # ── Open and merge a release PR, then tag ───────────────────────────────
+      # main requires every change — even this bot's — to land via a
+      # (squash-only) pull request, so this pushes the stamp to a throwaway
+      # branch and merges it through the API rather than pushing to main
+      # directly.
+      - name: Open and merge release PR
+        id: release_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          BRANCH="release/${{ steps.ver.outputs.tag }}"
+          git checkout -b "$BRANCH"
           git add CHANGELOG.md helm/scutum/Chart.yaml
           git commit -m "chore: release ${{ steps.ver.outputs.tag }}"
-          git tag "${{ steps.ver.outputs.tag }}"
-          git push origin HEAD:main
+          git push origin "$BRANCH"
+
+          PR_URL=$(gh pr create --base main --head "$BRANCH" \
+            --title "chore: release ${{ steps.ver.outputs.tag }}" \
+            --body "Automated version bump (${{ steps.bump.outputs.bump }}) — CHANGELOG stamp and Helm chart version for ${{ steps.ver.outputs.tag }}.")
+
+          gh pr merge "$PR_URL" --squash --delete-branch
+
+          # The squash merge creates a brand-new commit on main — tag that,
+          # not the throwaway release-branch commit made above.
+          git fetch origin main
+          git tag "${{ steps.ver.outputs.tag }}" origin/main
           git push origin "${{ steps.ver.outputs.tag }}"
 
       # ── Carry the same stamp back onto develop ──────────────────────────────
@@ -121,9 +147,12 @@ jobs:
       # "## [Unreleased]" heading for contributors to add entries under.
       - name: Sync CHANGELOG/Helm stamp back to develop
         run: |
-          git fetch origin develop
+          git fetch origin develop main
           git checkout -B develop origin/develop
-          git checkout main -- CHANGELOG.md helm/scutum/Chart.yaml
+          # origin/main, not the local main branch — the latter is stale
+          # since the release PR above was merged remotely via the API, not
+          # pushed to this checkout's local main ref.
+          git checkout origin/main -- CHANGELOG.md helm/scutum/Chart.yaml
 
           if git diff --cached --quiet; then
             echo "develop already up to date, nothing to sync"
