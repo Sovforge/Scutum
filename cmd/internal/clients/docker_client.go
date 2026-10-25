@@ -108,6 +108,40 @@ func (c *DockerClient) DoStream(method, path string, body interface{}) (io.ReadC
 	return resp.Body, nil
 }
 
+// DoStreamWithHeaders is DoStream with additional request headers — needed
+// for authenticated image pulls, which pass registry credentials via the
+// X-Registry-Auth header rather than the request body.
+func (c *DockerClient) DoStreamWithHeaders(method, path string, body interface{}, headers map[string]string) (io.ReadCloser, error) {
+	var bodyReader io.Reader
+	if body != nil {
+		data, _ := json.Marshal(body)
+		bodyReader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequest(method, c.baseurl+path, bodyReader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("Docker API error: %s", resp.Status)
+	}
+
+	return resp.Body, nil
+}
+
 // Hijack establishes a raw connection to the Docker daemon for endpoints that
 // require streaming (exec, attach). It uses the same transport as regular API
 // calls — Unix socket on Linux, TCP on Windows.

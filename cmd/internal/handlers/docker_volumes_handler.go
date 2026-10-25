@@ -1,17 +1,11 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
-	"time"
 
 	"scutum/cmd/internal/clients"
 	"scutum/cmd/internal/models"
@@ -172,68 +166,10 @@ func writeDockerClientError(w http.ResponseWriter, err error) {
 // second way to reach the same local endpoints above (by node ID in the
 // path, rather than X-Target-Node header + whichever node the topbar
 // switcher has selected) — handy for a specific row action on the Nodes
-// page, or for scripting against a known node ID. ──────────────────────
-
-// relayToNode looks up {id}; if it's not the hub, relays the request to
-// localPath on that node and writes the response, returning true (caller
-// should return immediately). Returns false when {id} is the hub itself —
-// the caller should handle the request locally.
-func (h *DockerHandler) relayToNode(w http.ResponseWriter, r *http.Request, body []byte, localPath string) bool {
-	id := r.PathValue("id")
-	node, err := h.nodeStore.GetNode(r.Context(), id)
-	if err != nil {
-		http.Error(w, "node not found", http.StatusNotFound)
-		return true
-	}
-	if node.Type == "hub" {
-		return false
-	}
-	out, err := relayDockerRequest(r.Context(), node, r.Method, localPath, body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return true
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(out) //nolint:errcheck
-	return true
-}
-
-// relayDockerRequest HMAC-signs and forwards a request to a specific path on
-// node — distinct from proxyToNode (proxy.go), which always relays to the
-// *same* path the incoming request used; here the hub-facing path
-// (/nodes/{id}/volumes) and the node-local path (/docker/volumes) differ.
-func relayDockerRequest(ctx context.Context, node store.NodeRecord, method, path string, body []byte) ([]byte, error) {
-	host := normaliseAddress(node.Address)
-	target := "https://" + host + "/api" + path
-	var bodyReader io.Reader
-	if body != nil {
-		bodyReader = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if len(proxyHMACKey) > 0 {
-		ts := strconv.FormatInt(time.Now().Unix(), 10)
-		sig := hubRequestSig(proxyHMACKey, ts, method, "/api"+path, body)
-		req.Header.Set("X-Scutum-Hub-Ts", ts)
-		req.Header.Set("X-Scutum-Hub-Sig", sig)
-	}
-	client := &http.Client{Timeout: 3 * time.Minute, Transport: &http.Transport{TLSClientConfig: proxyTLSConfig}}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("node returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	return respBody, nil
-}
+// page, or for scripting against a known node ID.
+//
+// relayToNode and relayDockerRequest live in docker_images_handler.go —
+// shared as-is rather than duplicated here. ─────────────────────────────
 
 func (h *DockerHandler) HandleListVolumesForNode(w http.ResponseWriter, r *http.Request) {
 	if h.relayToNode(w, r, nil, "/docker/volumes") {

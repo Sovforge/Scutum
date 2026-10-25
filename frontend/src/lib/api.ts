@@ -480,6 +480,75 @@ export function deployCompose(yaml: string, nodeId?: string): Promise<{ output?:
   )
 }
 
+// ── Docker images ────────────────────────────────────────────────────────
+export interface DockerImage {
+  Id: string
+  RepoTags: string[] | null
+  Created: number // unix seconds
+  Size: number
+}
+
+export interface PullImageRequest {
+  image: string
+  username?: string
+  password?: string // may be "secret://<name>" to resolve through the secrets vault
+}
+
+export interface PullImageResult {
+  image: string
+  success: boolean
+  error?: string
+}
+
+export interface ImageDeleteEntry {
+  Untagged?: string
+  Deleted?: string
+}
+
+export interface ImagePruneResult {
+  ImagesDeleted: ImageDeleteEntry[]
+  SpaceReclaimed: number
+}
+
+// Same convention as listContainers — explicit nodeId, omitted means local.
+export function listImages(nodeId?: string): Promise<DockerImage[]> {
+  return get('/docker/images', nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+export function pullImage(payload: PullImageRequest, nodeId?: string): Promise<PullImageResult> {
+  return post('/docker/images/pull', payload, nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+export function removeImage(imageId: string, nodeId?: string): Promise<ImageDeleteEntry[]> {
+  return del(`/docker/images/${encodeURIComponent(imageId)}`, nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+export function pruneImages(nodeId?: string): Promise<ImagePruneResult> {
+  return post('/docker/images/prune', undefined, nodeId ? nodeHeaders(nodeId) : undefined)
+}
+
+// Group-targeted: the "image diff" view and fan-out pull.
+export interface GroupNodeImages {
+  node_id: string
+  node_name: string
+  images?: DockerImage[]
+  error?: string
+}
+
+export function listGroupImages(groupId: string): Promise<GroupNodeImages[]> {
+  return get(`/groups/${groupId}/images`)
+}
+
+export interface GroupNodePullResult {
+  node_id: string
+  node_name: string
+  result: PullImageResult
+}
+
+export function pullImageToGroup(groupId: string, payload: PullImageRequest): Promise<GroupNodePullResult[]> {
+  return post(`/groups/${groupId}/images/pull`, payload)
+}
+
 // ── Network ──────────────────────────────────────────────────────────────
 export interface MeshSummary {
   total: number
@@ -521,6 +590,62 @@ export interface PeerStatus {
 
 export function getMeshPeers(): Promise<PeerStatus[]> {
   return get('/network/peers')
+}
+
+// ── Network policy ───────────────────────────────────────────────────────
+// Rules are applied in a dedicated iptables chain hooked only off the
+// WireGuard interface's own forwarded traffic (never INPUT/OUTPUT), so a
+// bad policy — including default-deny — can never lock out the hub's own
+// management access. src/dst "any" means unrestricted; "node"/"group" match
+// against that target's resolved WireGuard mesh IP(s) at apply time.
+export interface NetworkPolicy {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  priority: number
+  action: 'allow' | 'deny'
+  protocol: 'tcp' | 'udp' | 'icmp' | 'any'
+  port: string
+  src_type: 'any' | 'node' | 'group'
+  src_id: string
+  dst_type: 'any' | 'node' | 'group'
+  dst_id: string
+  created_by: string
+  created_at: string
+  updated_by: string
+  updated_at: string
+}
+
+export type NetworkPolicyInput = Omit<NetworkPolicy, 'id' | 'created_by' | 'created_at' | 'updated_by' | 'updated_at'>
+
+export function listNetworkPolicies(): Promise<NetworkPolicy[]> {
+  return get('/network/policies')
+}
+
+export function createNetworkPolicy(payload: NetworkPolicyInput): Promise<NetworkPolicy> {
+  return post('/network/policies', payload)
+}
+
+export function updateNetworkPolicy(id: string, payload: NetworkPolicyInput): Promise<NetworkPolicy> {
+  return put(`/network/policies/${id}`, payload)
+}
+
+export function deleteNetworkPolicy(id: string): Promise<void> {
+  return del(`/network/policies/${id}`)
+}
+
+export interface NetworkPolicySettings {
+  default_deny: boolean
+  iptables_available: boolean
+}
+
+export function getNetworkPolicySettings(): Promise<NetworkPolicySettings> {
+  return get('/network/policy-settings')
+}
+
+export function setNetworkDefaultDeny(defaultDeny: boolean): Promise<void> {
+  return put('/network/policy-settings', { default_deny: defaultDeny })
 }
 
 // ── Federation ───────────────────────────────────────────────────────────
@@ -868,6 +993,84 @@ export async function gitSync(payload: GitSyncRequest): Promise<string> {
   const text = await res.text()
   if (!res.ok) throw new ApiError(res.status, text.trim() || res.statusText)
   return text
+}
+
+// ── GitOps sources ───────────────────────────────────────────────────────
+// A real, persisted multi-source registry — distinct from the one-shot
+// gitSync() above. Each source watches a repo/branch/path and applies the
+// manifest there (Docker Compose or raw Kubernetes YAML) on the hub or a
+// target node, reconciled automatically on its own poll interval and also
+// syncable on demand or via a signed push webhook. Token/webhook_secret are
+// write-only: send to set/update, never returned by GET.
+export interface GitOpsSource {
+  id: string
+  name: string
+  repo_url: string
+  branch: string
+  path: string
+  manifest_type: 'compose' | 'kubernetes'
+  target_node_id: string
+  username?: string
+  poll_interval_seconds: number
+  enabled: boolean
+  last_synced_at?: string
+  last_commit_sha: string
+  last_content_hash: string
+  last_status: '' | 'pending' | 'synced' | 'skipped' | 'error'
+  last_error?: string
+  created_by: string
+  created_at: string
+  updated_by: string
+  updated_at: string
+}
+
+export interface GitOpsSourceInput {
+  name: string
+  repo_url: string
+  branch?: string
+  path: string
+  manifest_type: 'compose' | 'kubernetes'
+  target_node_id?: string
+  username?: string
+  poll_interval_seconds?: number
+  enabled?: boolean
+  token?: string
+  webhook_secret?: string
+}
+
+export interface GitOpsSyncEvent {
+  id: string
+  source_id: string
+  commit_sha: string
+  status: 'synced' | 'skipped' | 'error'
+  message: string
+  triggered_by: string
+  started_at: string
+  finished_at?: string
+}
+
+export function listGitOpsSources(): Promise<GitOpsSource[]> {
+  return get('/gitops/sources')
+}
+
+export function createGitOpsSource(payload: GitOpsSourceInput): Promise<GitOpsSource> {
+  return post('/gitops/sources', payload)
+}
+
+export function updateGitOpsSource(id: string, payload: GitOpsSourceInput): Promise<GitOpsSource> {
+  return put(`/gitops/sources/${id}`, payload)
+}
+
+export function deleteGitOpsSource(id: string): Promise<void> {
+  return del(`/gitops/sources/${id}`)
+}
+
+export function syncGitOpsSource(id: string): Promise<void> {
+  return post(`/gitops/sources/${id}/sync`)
+}
+
+export function listGitOpsSyncEvents(id: string, limit = 20): Promise<GitOpsSyncEvent[]> {
+  return get(`/gitops/sources/${id}/events?limit=${limit}`)
 }
 
 // ── Plugins ──────────────────────────────────────────────────────────────

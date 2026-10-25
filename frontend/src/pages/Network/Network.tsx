@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { ArrowDown, ArrowUp, Globe, KeyRound, Network as NetworkIcon, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Globe, KeyRound, Network as NetworkIcon, Plus, Shield, ShieldAlert, Trash2 } from 'lucide-react'
 import AppShell from '../../components/AppShell/AppShell'
 import Button from '../../components/ui/Button/Button'
 import TextField from '../../components/ui/TextField/TextField'
+import Select from '../../components/ui/Select/Select'
 import Badge from '../../components/ui/Badge/Badge'
 import Callout from '../../components/ui/Callout/Callout'
 import Section from '../../components/ui/Section/Section'
@@ -18,12 +19,21 @@ import { formatBytes } from '../../lib/format'
 import {
   ApiError,
   createFederationPeer,
+  createNetworkPolicy,
   deleteFederationPeer,
+  deleteNetworkPolicy,
   getHubKey,
   getMeshPeers,
+  getNetworkPolicySettings,
   listFederationPeers,
+  listNodeGroups,
+  listNetworkPolicies,
   listNodes,
+  setNetworkDefaultDeny,
   type FederationPeer,
+  type NetworkPolicy,
+  type NetworkPolicySettings,
+  type NodeGroup,
   type NodeRecord,
   type PeerStatus,
 } from '../../lib/api'
@@ -193,6 +203,140 @@ function Network() {
       setSaving(false)
     }
   }
+
+  // ── Network policies ─────────────────────────────────────────────────────
+  const [policies, setPolicies] = useState<NetworkPolicy[]>([])
+  const [policiesLoading, setPoliciesLoading] = useState(true)
+  const [policiesError, setPoliciesError] = useState('')
+  const [policySettings, setPolicySettings] = useState<NetworkPolicySettings | null>(null)
+  const [groups, setGroups] = useState<NodeGroup[]>([])
+  const [busyPolicyId, setBusyPolicyId] = useState<string | null>(null)
+  const [defaultDenyBusy, setDefaultDenyBusy] = useState(false)
+
+  const [showPolicyForm, setShowPolicyForm] = useState(false)
+  const [policyName, setPolicyName] = useState('')
+  const [policyDescription, setPolicyDescription] = useState('')
+  const [policyPriority, setPolicyPriority] = useState('100')
+  const [policyAction, setPolicyAction] = useState<'allow' | 'deny'>('deny')
+  const [policyProtocol, setPolicyProtocol] = useState<'any' | 'tcp' | 'udp' | 'icmp'>('any')
+  const [policyPort, setPolicyPort] = useState('')
+  const [srcType, setSrcType] = useState<'any' | 'node' | 'group'>('any')
+  const [srcId, setSrcId] = useState('')
+  const [dstType, setDstType] = useState<'any' | 'node' | 'group'>('any')
+  const [dstId, setDstId] = useState('')
+  const [policyFormError, setPolicyFormError] = useState('')
+  const [policySaving, setPolicySaving] = useState(false)
+
+  async function loadPolicies() {
+    setPoliciesLoading(true)
+    setPoliciesError('')
+    try {
+      const [p, s, g] = await Promise.all([listNetworkPolicies(), getNetworkPolicySettings(), listNodeGroups()])
+      setPolicies(p)
+      setPolicySettings(s)
+      setGroups(g)
+    } catch (e) {
+      setPoliciesError(e instanceof ApiError ? e.message : 'Failed to load network policies')
+    } finally {
+      setPoliciesLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadPolicies()
+  }, [])
+
+  function targetLabel(type: string, id: string): string {
+    if (type !== 'node' && type !== 'group') return 'any'
+    if (type === 'node') return nodes.find((n) => n.id === id)?.name ?? `node:${id.slice(0, 8)}`
+    return groups.find((g) => g.id === id)?.name ?? `group:${id.slice(0, 8)}`
+  }
+
+  function resetPolicyForm() {
+    setPolicyName('')
+    setPolicyDescription('')
+    setPolicyPriority('100')
+    setPolicyAction('deny')
+    setPolicyProtocol('any')
+    setPolicyPort('')
+    setSrcType('any')
+    setSrcId('')
+    setDstType('any')
+    setDstId('')
+    setPolicyFormError('')
+  }
+
+  async function submitPolicy(e: FormEvent) {
+    e.preventDefault()
+    if (!policyName) {
+      setPolicyFormError('Name is required.')
+      return
+    }
+    if (srcType !== 'any' && !srcId) {
+      setPolicyFormError('Select a source node/group, or set source to "any".')
+      return
+    }
+    if (dstType !== 'any' && !dstId) {
+      setPolicyFormError('Select a destination node/group, or set destination to "any".')
+      return
+    }
+    setPolicyFormError('')
+    setPolicySaving(true)
+    try {
+      await createNetworkPolicy({
+        name: policyName,
+        description: policyDescription,
+        enabled: true,
+        priority: Number(policyPriority) || 100,
+        action: policyAction,
+        protocol: policyProtocol,
+        port: policyProtocol === 'icmp' ? '' : policyPort,
+        src_type: srcType,
+        src_id: srcType === 'any' ? '' : srcId,
+        dst_type: dstType,
+        dst_id: dstType === 'any' ? '' : dstId,
+      })
+      toast(`Policy "${policyName}" created`)
+      resetPolicyForm()
+      setShowPolicyForm(false)
+      loadPolicies()
+    } catch (e2) {
+      setPolicyFormError(e2 instanceof ApiError ? e2.message : 'Failed to create policy')
+    } finally {
+      setPolicySaving(false)
+    }
+  }
+
+  async function removePolicy(p: NetworkPolicy) {
+    setBusyPolicyId(p.id)
+    try {
+      await deleteNetworkPolicy(p.id)
+      setPolicies((prev) => prev.filter((x) => x.id !== p.id))
+      toast(`Policy "${p.name}" deleted`, 'danger')
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Delete failed', 'danger')
+    } finally {
+      setBusyPolicyId(null)
+    }
+  }
+
+  async function toggleDefaultDeny() {
+    if (!policySettings) return
+    const next = !policySettings.default_deny
+    setDefaultDenyBusy(true)
+    try {
+      await setNetworkDefaultDeny(next)
+      setPolicySettings({ ...policySettings, default_deny: next })
+      toast(next ? 'Default-deny enabled — unmatched mesh traffic is now dropped' : 'Default-deny disabled')
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Failed to change default-deny', 'danger')
+    } finally {
+      setDefaultDenyBusy(false)
+    }
+  }
+
+  const nodeOptions = [{ value: '', label: 'Select a node…' }, ...nodes.map((n) => ({ value: n.id, label: n.name }))]
+  const groupOptions = [{ value: '', label: 'Select a group…' }, ...groups.map((g) => ({ value: g.id, label: g.name }))]
 
   return (
     <AppShell title="Network">
@@ -386,6 +530,162 @@ function Network() {
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </Table>
+          )}
+        </Section>
+
+        <Section
+          title="Network policies"
+          action={
+            <Button variant="ghost" onClick={() => setShowPolicyForm((v) => !v)}>
+              <Plus size={14} />
+              New policy
+            </Button>
+          }
+        >
+          <div className={styles.calloutWrap}>
+            <Callout variant="info">
+              Rules apply only to traffic entering and leaving the WireGuard interface — never to SSH, the API
+              itself, or anything else on the host, so a bad policy can't lock you out. Rules run in priority order
+              (lowest first); the first match wins.
+            </Callout>
+          </div>
+
+          {policySettings && (
+            <div className={styles.calloutWrap}>
+              <Callout variant={policySettings.default_deny ? 'warning' : 'info'}>
+                <span>
+                  Default-deny is <strong>{policySettings.default_deny ? 'ON' : 'off'}</strong> — unmatched mesh
+                  traffic is currently {policySettings.default_deny ? 'dropped' : 'allowed'}.
+                  {!policySettings.iptables_available && ' iptables is not available on this hub; policies are stored but not enforced.'}
+                </span>{' '}
+                <Button variant="ghost" onClick={toggleDefaultDeny} disabled={defaultDenyBusy}>
+                  {policySettings.default_deny ? <Shield size={14} /> : <ShieldAlert size={14} />}
+                  {policySettings.default_deny ? 'Disable default-deny' : 'Enable default-deny'}
+                </Button>
+              </Callout>
+            </div>
+          )}
+
+          {showPolicyForm && (
+            <form className={styles.form} onSubmit={submitPolicy}>
+              <TextField label="Name" id="policyName" value={policyName} onChange={(e) => setPolicyName(e.target.value)} placeholder="allow ssh from prod" />
+              <TextField
+                label="Description (optional)"
+                id="policyDescription"
+                value={policyDescription}
+                onChange={(e) => setPolicyDescription(e.target.value)}
+              />
+              <TextField label="Priority (lower runs first)" id="policyPriority" type="number" value={policyPriority} onChange={(e) => setPolicyPriority(e.target.value)} />
+              <Select
+                label="Action"
+                id="policyAction"
+                value={policyAction}
+                onChange={(e) => setPolicyAction(e.target.value as 'allow' | 'deny')}
+                options={[{ value: 'allow', label: 'Allow' }, { value: 'deny', label: 'Deny' }]}
+              />
+              <Select
+                label="Protocol"
+                id="policyProtocol"
+                value={policyProtocol}
+                onChange={(e) => setPolicyProtocol(e.target.value as 'any' | 'tcp' | 'udp' | 'icmp')}
+                options={[
+                  { value: 'any', label: 'Any' },
+                  { value: 'tcp', label: 'TCP' },
+                  { value: 'udp', label: 'UDP' },
+                  { value: 'icmp', label: 'ICMP' },
+                ]}
+              />
+              {policyProtocol !== 'icmp' && policyProtocol !== 'any' && (
+                <TextField label="Port (optional, e.g. 22 or 1000-2000)" id="policyPort" value={policyPort} onChange={(e) => setPolicyPort(e.target.value)} />
+              )}
+              <Select
+                label="Source"
+                id="policySrcType"
+                value={srcType}
+                onChange={(e) => {
+                  setSrcType(e.target.value as 'any' | 'node' | 'group')
+                  setSrcId('')
+                }}
+                options={[{ value: 'any', label: 'Any' }, { value: 'node', label: 'Node' }, { value: 'group', label: 'Group' }]}
+              />
+              {srcType !== 'any' && (
+                <Select label="Source target" id="policySrcId" value={srcId} onChange={(e) => setSrcId(e.target.value)} options={srcType === 'node' ? nodeOptions : groupOptions} />
+              )}
+              <Select
+                label="Destination"
+                id="policyDstType"
+                value={dstType}
+                onChange={(e) => {
+                  setDstType(e.target.value as 'any' | 'node' | 'group')
+                  setDstId('')
+                }}
+                options={[{ value: 'any', label: 'Any' }, { value: 'node', label: 'Node' }, { value: 'group', label: 'Group' }]}
+              />
+              {dstType !== 'any' && (
+                <Select label="Destination target" id="policyDstId" value={dstId} onChange={(e) => setDstId(e.target.value)} options={dstType === 'node' ? nodeOptions : groupOptions} />
+              )}
+              {policyFormError && <Callout variant="danger">{policyFormError}</Callout>}
+              <Button type="submit" disabled={policySaving}>
+                {policySaving ? 'Creating…' : 'Create policy'}
+              </Button>
+            </form>
+          )}
+
+          {policiesError ? (
+            <Callout variant="danger">{policiesError}</Callout>
+          ) : policiesLoading ? (
+            <div className={styles.loadingRow}>Loading…</div>
+          ) : policies.length === 0 ? (
+            <EmptyState icon={Shield} title="No network policies" description="Create a policy to allow or deny traffic between nodes or groups on the mesh." />
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <th>Pri</th>
+                  <th>Name</th>
+                  <th>Source</th>
+                  <th>Destination</th>
+                  <th>Proto/Port</th>
+                  <th>Action</th>
+                  <th>Enabled</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {policies.map((p) => {
+                  const busy = busyPolicyId === p.id
+                  return (
+                    <tr key={p.id}>
+                      <td className="cell-muted">{p.priority}</td>
+                      <td className="cell-name">{p.name}</td>
+                      <td className="cell-muted">{targetLabel(p.src_type, p.src_id)}</td>
+                      <td className="cell-muted">{targetLabel(p.dst_type, p.dst_id)}</td>
+                      <td className="cell-muted">
+                        {p.protocol}
+                        {p.port ? `/${p.port}` : ''}
+                      </td>
+                      <td>
+                        <Badge variant={p.action === 'allow' ? 'success' : 'danger'}>{p.action}</Badge>
+                      </td>
+                      <td>
+                        <Badge variant={p.enabled ? 'success' : 'neutral'}>{p.enabled ? 'on' : 'off'}</Badge>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className={styles.removeBtn}
+                          onClick={() => removePolicy(p)}
+                          disabled={busy}
+                          aria-label={`Delete ${p.name}`}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </Table>
           )}
