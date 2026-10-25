@@ -18,13 +18,31 @@ jobs:
       pull-requests: write   # open and merge the release PR
 
     steps:
+      # The default GITHUB_TOKEN deliberately cannot trigger other workflow
+      # runs (GitHub's anti-recursion guard) — so a tag pushed with it would
+      # never fire release.yml's `on: push: tags`, silently skipping the
+      # actual Docker build/publish/GitHub Release this whole pipeline
+      # exists for. RELEASE_PAT must be a real personal access token (fine-
+      # grained, scoped to just this repo, Contents: write) added as a repo
+      # secret — PAT-triggered pushes aren't subject to that guard. The ||
+      # fallback below keeps this job working (tag/CHANGELOG/PR) even before
+      # that secret exists, just without triggering release.yml at the end —
+      # referencing secrets.* directly in each expression (rather than
+      # routing a secret through a step output to reuse it) is deliberate:
+      # GitHub only guarantees log-masking for secrets referenced this way.
+      - name: Warn if RELEASE_PAT is missing
+        run: |
+          if [ -z "${{ secrets.RELEASE_PAT }}" ]; then
+            echo "::warning::RELEASE_PAT secret is not set — falling back to GITHUB_TOKEN, so the tag this job pushes will NOT trigger release.yml (GitHub's anti-recursion guard blocks GITHUB_TOKEN-pushed tags from firing other workflows). Add a fine-grained PAT (Contents: write, scoped to this repo) as the RELEASE_PAT secret to fix."
+          fi
+
       # The PR merge already landed develop's commits on main — this picks
       # up main post-merge rather than merging again here.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
 
       # ── Decide the bump type from Conventional Commits ──────────────────────
       # Scans every commit since the last tag: any BREAKING CHANGE footer or
@@ -118,7 +136,7 @@ jobs:
       - name: Open and merge release PR
         id: release_pr
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
