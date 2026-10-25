@@ -837,6 +837,84 @@ export async function gitSync(payload: GitSyncRequest): Promise<string> {
   return text
 }
 
+// ── GitOps sources ───────────────────────────────────────────────────────
+// A real, persisted multi-source registry — distinct from the one-shot
+// gitSync() above. Each source watches a repo/branch/path and applies the
+// manifest there (Docker Compose or raw Kubernetes YAML) on the hub or a
+// target node, reconciled automatically on its own poll interval and also
+// syncable on demand or via a signed push webhook. Token/webhook_secret are
+// write-only: send to set/update, never returned by GET.
+export interface GitOpsSource {
+  id: string
+  name: string
+  repo_url: string
+  branch: string
+  path: string
+  manifest_type: 'compose' | 'kubernetes'
+  target_node_id: string
+  username?: string
+  poll_interval_seconds: number
+  enabled: boolean
+  last_synced_at?: string
+  last_commit_sha: string
+  last_content_hash: string
+  last_status: '' | 'pending' | 'synced' | 'skipped' | 'error'
+  last_error?: string
+  created_by: string
+  created_at: string
+  updated_by: string
+  updated_at: string
+}
+
+export interface GitOpsSourceInput {
+  name: string
+  repo_url: string
+  branch?: string
+  path: string
+  manifest_type: 'compose' | 'kubernetes'
+  target_node_id?: string
+  username?: string
+  poll_interval_seconds?: number
+  enabled?: boolean
+  token?: string
+  webhook_secret?: string
+}
+
+export interface GitOpsSyncEvent {
+  id: string
+  source_id: string
+  commit_sha: string
+  status: 'synced' | 'skipped' | 'error'
+  message: string
+  triggered_by: string
+  started_at: string
+  finished_at?: string
+}
+
+export function listGitOpsSources(): Promise<GitOpsSource[]> {
+  return get('/gitops/sources')
+}
+
+export function createGitOpsSource(payload: GitOpsSourceInput): Promise<GitOpsSource> {
+  return post('/gitops/sources', payload)
+}
+
+export function updateGitOpsSource(id: string, payload: GitOpsSourceInput): Promise<GitOpsSource> {
+  return put(`/gitops/sources/${id}`, payload)
+}
+
+export function deleteGitOpsSource(id: string): Promise<void> {
+  return del(`/gitops/sources/${id}`)
+}
+
+export function syncGitOpsSource(id: string): Promise<void> {
+  return post(`/gitops/sources/${id}/sync`)
+}
+
+export function listGitOpsSyncEvents(id: string, limit = 20): Promise<GitOpsSyncEvent[]> {
+  return get(`/gitops/sources/${id}/events?limit=${limit}`)
+}
+
 // ── Plugins ──────────────────────────────────────────────────────────────
 // The backend tracks only { name, path } per loaded WASM plugin — no
 // version, description, or load timestamp (see PluginInfo in

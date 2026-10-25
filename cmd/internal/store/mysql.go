@@ -232,6 +232,40 @@ CREATE TABLE IF NOT EXISTS app_secrets (
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS gitops_sources (
+    id                    VARCHAR(255) PRIMARY KEY,
+    name                  VARCHAR(255) NOT NULL,
+    repo_url              TEXT NOT NULL,
+    branch                VARCHAR(255) NOT NULL DEFAULT 'main',
+    path                  VARCHAR(1024) NOT NULL DEFAULT '',
+    manifest_type         VARCHAR(20) NOT NULL DEFAULT 'compose',
+    target_node_id        VARCHAR(255) NOT NULL DEFAULT '',
+    username              VARCHAR(255) NOT NULL DEFAULT '',
+    poll_interval_seconds INT NOT NULL DEFAULT 60,
+    enabled               TINYINT NOT NULL DEFAULT 1,
+    last_synced_at        TIMESTAMP NULL,
+    last_commit_sha       VARCHAR(64) NOT NULL DEFAULT '',
+    last_content_hash     VARCHAR(64) NOT NULL DEFAULT '',
+    last_status           VARCHAR(20) NOT NULL DEFAULT '',
+    last_error            TEXT NOT NULL DEFAULT '',
+    created_by            VARCHAR(255) NOT NULL DEFAULT '',
+    created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by            VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS gitops_sync_events (
+    id           VARCHAR(255) PRIMARY KEY,
+    source_id    VARCHAR(255) NOT NULL,
+    commit_sha   VARCHAR(64) NOT NULL DEFAULT '',
+    status       VARCHAR(20) NOT NULL,
+    message      TEXT NOT NULL DEFAULT '',
+    triggered_by VARCHAR(255) NOT NULL DEFAULT '',
+    started_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at  TIMESTAMP NULL,
+    CONSTRAINT fk_gitops_sync_source FOREIGN KEY (source_id) REFERENCES gitops_sources(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS setup_state (
     ` + "`key`" + `  VARCHAR(255) PRIMARY KEY,
     value VARCHAR(255) NOT NULL

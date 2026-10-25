@@ -410,6 +410,7 @@ func main() {
 	secretsVaultCtrl := handlers.NewSecretsVaultHandler(db)
 	settingsCtrl := handlers.NewSettingsHandler(db)
 	gitCtrl := handlers.NewGitHandler()
+	gitopsCtrl := handlers.NewGitOpsHandler(db, dataDir, jwtSecret, dockerCtrl, kubernetesCtrl)
 	s3Ctrl := handlers.NewS3Handler()
 	storageCtrl := handlers.NewStorageHandler(db)
 	wgService := &wireguard.CLIService{}
@@ -562,6 +563,19 @@ func main() {
 	// Git
 	apiMux.Handle("POST /git/sync", require("git", "write", gitCtrl.HandleGitSync))
 
+	// GitOps — CRUD is normally authenticated; the sync trigger is
+	// deliberately NOT wrapped in require() because it must also accept an
+	// unauthenticated-but-HMAC-signed push webhook from a real git host
+	// (GitHub-style X-Hub-Signature-256). It resolves auth itself: either a
+	// valid webhook signature for that source, or a normal Bearer/API-Key
+	// with gitops:write — see GitOpsHandler.authorizeSync.
+	apiMux.Handle("GET /gitops/sources", require("gitops", "read", gitopsCtrl.HandleList))
+	apiMux.Handle("POST /gitops/sources", require("gitops", "write", gitopsCtrl.HandleCreate))
+	apiMux.Handle("PUT /gitops/sources/{id}", require("gitops", "write", gitopsCtrl.HandleUpdate))
+	apiMux.Handle("DELETE /gitops/sources/{id}", require("gitops", "admin", gitopsCtrl.HandleDelete))
+	apiMux.Handle("GET /gitops/sources/{id}/events", require("gitops", "read", gitopsCtrl.HandleListEvents))
+	apiMux.HandleFunc("POST /gitops/sources/{id}/sync", gitopsCtrl.HandleSync)
+
 	// S3 / Storage
 	apiMux.Handle("POST /storage/s3/upload", require("storage", "write", s3Ctrl.HandleUpload))
 	apiMux.Handle("POST /storage/s3/download", require("storage", "read", s3Ctrl.HandleDownload))
@@ -712,6 +726,26 @@ func main() {
 
 	// Alert evaluator
 	go alerts.NewEvaluator(db, dispatcher).Start(ctx)
+
+	// GitOps reconciler: each source has its own poll interval, so rather
+	// than one goroutine per source this runs a single fast ticker and asks
+	// the handler which sources are actually due (last_synced_at + their
+	// own poll_interval_seconds) each time. Manual/webhook syncs also call
+	// straight into the same sync path out-of-band (see gitops_handler.go)
+	// so they don't wait for this tick.
+	go func() {
+		gitopsCtrl.ReconcileDue(ctx)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				gitopsCtrl.ReconcileDue(ctx)
+			}
+		}
+	}()
 
 	// Certificates: inventory/rotation API, plus a daily expiry check that
 	// fires a webhook once a cert is within certExpiryWarnDays of NotAfter.
