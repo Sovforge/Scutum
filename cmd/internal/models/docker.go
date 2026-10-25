@@ -54,3 +54,40 @@ type DeployResponse struct {
 	Message string `json:"message"`
 	Error   string `json:"error,omitempty"`
 }
+
+// Image is the trimmed shape of one entry from the Docker Engine API's
+// GET /images/json — only the fields the UI actually needs.
+type Image struct {
+	ID       string   `json:"Id"`
+	RepoTags []string `json:"RepoTags"`
+	Created  int64    `json:"Created"` // unix seconds
+	Size     int64    `json:"Size"`
+}
+
+// PullImageRequest is what the UI sends to pull an image — Username/Password
+// are optional and never persisted; Password may be a "secret://name"
+// reference into the secrets vault instead of a literal value.
+type PullImageRequest struct {
+	Image    string `json:"image"` // "nginx:latest", "ghcr.io/org/app:1.2.3", ...
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+// PullImageResult summarizes a pull — the Docker Engine API streams
+// newline-delimited progress events; this is the distilled outcome.
+type PullImageResult struct {
+	Image   string `json:"image"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// ImagePruneResult mirrors POST /images/prune's response shape.
+type ImagePruneResult struct {
+	ImagesDeleted  []ImageDeleteEntry `json:"ImagesDeleted"`
+	SpaceReclaimed int64              `json:"SpaceReclaimed"`
+}
+
+type ImageDeleteEntry struct {
+	Untagged string `json:"Untagged,omitempty"`
+	Deleted  string `json:"Deleted,omitempty"`
+}

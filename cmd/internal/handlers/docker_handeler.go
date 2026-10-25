@@ -15,13 +15,31 @@ import (
 
 	"scutum/cmd/internal/clients"
 	"scutum/cmd/internal/models"
+	"scutum/cmd/internal/store"
 	"scutum/cmd/internal/utils"
 )
 
 type DockerHandler struct {
-	client    *clients.DockerClient
-	nodeStore nodeProxyStore
-	secrets   secretsValueStore
+	client     *clients.DockerClient
+	nodeStore  nodeProxyStore
+	secrets    secretsValueStore
+	groupStore imageGroupStore
+}
+
+// imageGroupStore is the minimal group-membership lookup image group
+// operations need. Optional — set via SetGroupStore, mirroring
+// WireGuardHandler's SetPeerStore/SetEndpointStore pattern, so the
+// constructor signature (already called from both main.go and tests)
+// doesn't need to change.
+type imageGroupStore interface {
+	ListNodesInGroup(ctx context.Context, groupID string) ([]store.NodeRecord, error)
+}
+
+// SetGroupStore enables the group-targeted image endpoints (pull/list across
+// every node in a group). Group routes 500 with a clear message if this was
+// never set.
+func (h *DockerHandler) SetGroupStore(gs imageGroupStore) {
+	h.groupStore = gs
 }
 
 func NewDockerHandler(ns nodeProxyStore, secrets secretsValueStore) *DockerHandler {
