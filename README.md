@@ -6,6 +6,8 @@
 
 **Secure. Peer-to-peer. Zero cloud dependencies.**  
 *A single binary that shields your infrastructure from vendor lock-in and SaaS control planes.*
+
+⭐ **If Scutum is useful to you, star the repo** — it's the easiest way to follow new releases and signal what's worth building next.
 </div>
 
 ---
@@ -17,7 +19,7 @@
 - **Manage fragmented tooling:** You want a single interface for networking, containers, and logs instead of juggling separate dashboards.
 - **Operate behind NAT:** You need to connect nodes without exposing ports to the public internet.
 - **Require full data sovereignty:** You want to deploy workloads without routing traffic or control data through a third-party SaaS plane.
-- **Build at the edge:** You're running air-gapped or high-latency systems that need local autonomy and offline capability.
+- **Build at the edge:** You're running on private or high-latency networks that need local autonomy without depending on a cloud control plane.
 
 <details>
 <summary><b>📖 Table of Contents</b> (click to expand)</summary>
@@ -43,7 +45,6 @@
 - [🔐 Single Sign-On (SSO)](#single-sign-on-sso)
 - [🔌 Plugin System](#plugin-system)
 - [📡 API Quick Reference](#api-quick-reference)
-- [🗺️ Roadmap](#roadmap)
 - [🏢 Enterprise & Commercial Use](#enterprise--commercial-use)
 - [🛡️ Supply Chain Security](#supply-chain-security-cra-compliance)
 - [💬 Community & Support](#community--support)
@@ -379,7 +380,7 @@ graph TD
 
 - **Security-Conscious Orgs:** Need to meet strict compliance (CRA, HIPAA) without third-party data transit.
 - **Infrastructure Engineers:** Tired of SaaS vendor lock-in and "black box" control planes.
-- **Edge & IoT Operators:** Need a mesh that functions in air-gapped or high-latency environments.
+- **Edge & IoT Operators:** Need a mesh that functions on private, high-latency, or otherwise constrained networks without a cloud dependency.
 - **Consolidated Operators:** Looking for a **"Single Pane of Glass"** experience to manage networking, workloads, and logs without jumping between multiple vendor dashboards.
 
 ## ✨ Key Features
@@ -401,12 +402,12 @@ graph TD
 Tailscale and Headscale are fantastic for secure network overlays. However, they are primarily network-focused. You still need separate tools for deploying applications, managing state, and collecting telemetry. **Scutum is an orchestration-first platform.** It integrates networking, workload deployment, state management, and observability into a true **"Single Pane of Glass"** experience, all within your control.
 
 ### vs. Nomad / Kubernetes (Orchestration)
-Kubernetes is the industry standard for cloud-native orchestration but comes with significant operational overhead (ETCD, complex control plane networking, Ingress controllers). Nomad offers simplicity but still requires external components for networking and state. **Scutum is a single binary** that provides GitOps-driven OCI and Kubernetes deployment, making it ideal for edge, air-gapped, or sovereign infrastructure where simplicity and self-containment are paramount.
+Kubernetes is the industry standard for cloud-native orchestration but comes with significant operational overhead (ETCD, complex control plane networking, Ingress controllers). Nomad offers simplicity but still requires external components for networking and state. **Scutum is a single binary** that provides GitOps-driven OCI and Kubernetes deployment, making it ideal for edge, private-network, or sovereign infrastructure where simplicity and self-containment are paramount.
 
 Manual VPN configurations are secure but quickly become an operational nightmare at scale. Managing peer keys, IP addresses, and routing tables for dozens or hundreds of nodes is time-consuming and error-prone. **Scutum automates the P2P overlay** with built-in key management and peer configuration, while strictly enforcing manual enrollment for security. This gives you the security of a manually configured setup with the agility and scalability of a modern mesh controller.
 
 ### vs. Cloud-Managed Orchestration (e.g., AWS ECS, Azure Container Apps)
-Cloud-managed services offer convenience but introduce vendor lock-in, reliance on SaaS control planes, and often opaque telemetry. Your data and control plane reside on someone else's infrastructure. **Scutum brings the entire control plane within your perimeter.** It eliminates all cloud dependencies, ensuring full data sovereignty, air-gap capability, and complete control over your infrastructure's operational data.
+Cloud-managed services offer convenience but introduce vendor lock-in, reliance on SaaS control planes, and often opaque telemetry. Your data and control plane reside on someone else's infrastructure. **Scutum brings the entire control plane within your perimeter.** It eliminates all cloud dependencies, ensuring full data sovereignty, no internet dependency, and complete control over your infrastructure's operational data.
 
 ## 🚀 Getting Started
 
@@ -489,7 +490,7 @@ Environment variables:
 | **Control Plane** | Managed by Vendor (SaaS) | **Owned by You (Local)** |
 | **Networking** | Public Relays / Exit Nodes | **Private P2P WireGuard Mesh** |
 | **Observability** | Third-party Ingestion | **Local OpenTelemetry Streams** |
-| **Dependency** | Internet Required | **Fully Air-Gap Capable** |
+| **Dependency** | Internet Required | **No Internet Dependency** |
 
 ---
 
@@ -739,18 +740,6 @@ All endpoints are served under `/api/`. Requests to authenticated routes require
 | `GET` | `/plugins` | ✓ | List loaded plugins |
 
 > Routes that accept an `X-Target-Node` header will proxy the request to the specified mesh node.
-
----
-
-## 🗺️ Roadmap
-
-| Feature | Status |
-| :--- | :--- |
-| **Single Sign-On (OIDC)** — Microsoft, GitHub, Authentik, Keycloak | ✅ Shipped |
-| **Helm chart** — first-class Kubernetes deployment | ✅ Shipped |
-| **Kubernetes operator** — CRD-based cluster management | ✅ Shipped |
-
-Have a feature request? Open an issue or start a discussion.
 
 ---
 

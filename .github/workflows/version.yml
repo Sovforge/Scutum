@@ -1,35 +1,63 @@
 name: Cut release
 
 on:
-  workflow_dispatch:
-    inputs:
-      bump:
-        description: 'Version bump type'
-        required: true
-        default: minor
-        type: choice
-        options: [major, minor, patch]
+  pull_request:
+    types: [closed]
+    branches: [main]
 
 jobs:
   release:
-    name: Bump version and tag
+    name: Tag and release
+    # Only a merged develop→main PR cuts a release — an unmerged (closed
+    # without merging) PR, or a PR from any other branch into main, does
+    # nothing.
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'develop'
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # push commit + tag
+      contents: write   # push commits + tag
 
     steps:
-      # Always release from develop — this job merges it into main.
+      # The PR merge already landed develop's commits on main — this picks
+      # up main post-merge rather than merging again here.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: develop
+          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Decide the bump type from Conventional Commits ──────────────────────
+      # Scans every commit since the last tag: any BREAKING CHANGE footer or
+      # "type!:" subject → major, any "feat:" → minor, otherwise patch. No
+      # third-party action — this repo's commit history already follows the
+      # convention closely enough to trust it.
+      - name: Determine version bump
+        id: bump
+        run: |
+          LAST=$(git tag --list 'v*.*.*' --sort=-version:refname | head -1)
+          LAST=${LAST:-v0.0.0}
+
+          # First release (no prior tag exists as a real ref yet): scan all
+          # history instead of a LAST..HEAD range, which would fail to resolve.
+          RANGE="$LAST..HEAD"
+          git rev-parse "$LAST" >/dev/null 2>&1 || RANGE="HEAD"
+
+          LOG=$(git log "$RANGE" --pretty=format:'%s%n%b')
+
+          if echo "$LOG" | grep -qE '(^|[^a-zA-Z])BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:'; then
+            BUMP=major
+          elif echo "$LOG" | grep -qE '^feat(\([^)]*\))?:'; then
+            BUMP=minor
+          else
+            BUMP=patch
+          fi
+
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "Detected bump: $BUMP (since $LAST)"
 
       # ── Compute next version ────────────────────────────────────────────────
       - name: Compute next version
         id: ver
         run: |
-          # Latest semver tag, or v0.0.0 if the repo has no tags yet.
           LAST=$(git tag --list 'v*.*.*' --sort=-version:refname | head -1)
           LAST=${LAST:-v0.0.0}
 
@@ -37,7 +65,7 @@ jobs:
           MINOR=$(echo "$LAST" | sed 's/^v//' | cut -d. -f2)
           PATCH=$(echo "$LAST" | sed 's/^v//' | cut -d. -f3)
 
-          case "${{ inputs.bump }}" in
+          case "${{ steps.bump.outputs.bump }}" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
             patch) PATCH=$((PATCH + 1)) ;;
@@ -46,7 +74,7 @@ jobs:
           VERSION="$MAJOR.$MINOR.$PATCH"
           echo "version=$VERSION"        >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION"           >> "$GITHUB_OUTPUT"
-          echo "Bumping $LAST → v$VERSION (${{ inputs.bump }})"
+          echo "Bumping $LAST → v$VERSION (${{ steps.bump.outputs.bump }})"
 
       # ── Stamp CHANGELOG ─────────────────────────────────────────────────────
       # Handles two heading formats that may appear in the file:
@@ -75,32 +103,43 @@ jobs:
           sed -i "s|^version:.*|version: $VERSION|"         helm/scutum/Chart.yaml
           sed -i "s|^appVersion:.*|appVersion: \"$VERSION\"|" helm/scutum/Chart.yaml
 
-      # ── Commit version bump to develop ───────────────────────────────────────
-      - name: Commit version bump on develop
+      # ── Commit, tag, and push to main ───────────────────────────────────────
+      - name: Commit, tag, and push to main
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add CHANGELOG.md helm/scutum/Chart.yaml
           git commit -m "chore: release ${{ steps.ver.outputs.tag }}"
-          git push origin HEAD:develop
-
-      # ── Merge develop → main and tag ─────────────────────────────────────────
-      - name: Merge develop into main and push tag
-        run: |
-          git fetch origin main
-          git checkout -b release-merge origin/main
-          git merge --no-ff develop -m "chore: merge develop → main for ${{ steps.ver.outputs.tag }}"
           git tag "${{ steps.ver.outputs.tag }}"
           git push origin HEAD:main
           git push origin "${{ steps.ver.outputs.tag }}"
+
+      # ── Carry the same stamp back onto develop ──────────────────────────────
+      # Otherwise develop's CHANGELOG/Helm version silently fall behind main's
+      # after every release, and the next release wouldn't have a fresh
+      # "## [Unreleased]" heading for contributors to add entries under.
+      - name: Sync CHANGELOG/Helm stamp back to develop
+        run: |
+          git fetch origin develop
+          git checkout -B develop origin/develop
+          git checkout main -- CHANGELOG.md helm/scutum/Chart.yaml
+
+          if git diff --cached --quiet; then
+            echo "develop already up to date, nothing to sync"
+          else
+            git add CHANGELOG.md helm/scutum/Chart.yaml
+            git commit -m "chore: sync CHANGELOG/Helm version after ${{ steps.ver.outputs.tag }} release"
+            git push origin HEAD:develop
+          fi
 
       - name: Summary
         run: |
           {
             echo "### Released ${{ steps.ver.outputs.tag }}"
             echo ""
-            echo "- Version bump committed to \`develop\`"
-            echo "- \`develop\` merged into \`main\`"
+            echo "- Bump type: ${{ steps.bump.outputs.bump }} (auto-detected from commits since the last tag)"
+            echo "- \`develop\` → \`main\` merge was the PR you just merged"
             echo "- Tag \`${{ steps.ver.outputs.tag }}\` pushed → **Release** workflow building now"
+            echo "- CHANGELOG/Helm version synced back to \`develop\`"
           } >> "$GITHUB_STEP_SUMMARY"
