@@ -5,7 +5,7 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w" \
     -o scutum ./cmd/api
 
-FROM golang:1.25-alpine AS sbom
+FROM golang:1.27-alpine AS sbom
 RUN apk add --no-cache curl
 RUN curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
 WORKDIR /app
@@ -27,7 +27,7 @@ RUN syft dir:/app -o cyclonedx-json=/app/sbom.json
 # unavailable, e.g. inside an unprivileged container, and that always
 # fails) — build the real upstream userspace implementation from source
 # instead, so a plain `docker run` without the kernel module still works.
-FROM golang:1.25-alpine AS wireguard-go
+FROM golang:1.27-alpine AS wireguard-go
 RUN CGO_ENABLED=0 go install golang.zx2c4.com/wireguard@latest && \
     mv "$(go env GOPATH)/bin/wireguard" "$(go env GOPATH)/bin/wireguard-go"
 
