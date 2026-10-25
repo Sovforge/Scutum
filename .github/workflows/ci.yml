@@ -2,12 +2,11 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
-
+    branches: [develop]
 
 jobs:
   test:
-    name: Test
+    name: Test (Go)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,3 +28,32 @@ jobs:
           name: coverage
           path: coverage.out
           retention-days: 7
+
+  frontend:
+    name: Build (frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # Runs `tsc -b && vite build` — real typechecking via project
+      # references. A bare `tsc --noEmit` at the repo root checks nothing:
+      # the root tsconfig.json has "files": [] and only "references" out to
+      # tsconfig.app.json/tsconfig.node.json, so it needs -b (or a direct
+      # -p to one of those configs) to actually type-check anything.
+      - name: Typecheck and build
+        run: npm run build

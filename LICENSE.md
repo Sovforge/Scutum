@@ -98,6 +98,7 @@ The following components are distributed under the MIT License:
 | `github.com/dustin/go-humanize` | Copyright © 2005–2008 Dustin Sallings |
 | `github.com/lib/pq` | Copyright © 2011–2013 'pq' Contributors; portions © 2011 Blake Mizerany |
 | `github.com/mattn/go-isatty` | Copyright © Yasuhiro MATSUMOTO |
+| `github.com/kr/text` | Copyright © 2012 Keith Rarick |
 | `github.com/ncruces/go-strftime` | Copyright © 2022 Nuno Cruces |
 | `github.com/skip2/go-qrcode` | Copyright © 2014 Tom Harwood |
 
@@ -108,6 +109,18 @@ The following components are distributed under the MIT License:
 | `react` / `react-dom` | Copyright © Meta Platforms, Inc. and affiliates |
 | `react-router` / `react-router-dom` | Copyright © React Training 2015–2019, Remix Software 2020–2022 |
 | `zustand` | Copyright © 2019 Paul Henschel |
+
+**Vendored binary — Docker image**
+
+Unlike the packages above, the following is not a Go import linked into the
+`scutum` binary — it's a separate upstream project, built from source in its
+own Docker build stage and copied into the final image as a standalone
+executable (`/usr/local/bin/wireguard-go`), used as a userspace WireGuard
+fallback when the kernel module isn't available.
+
+| Component | Copyright |
+|---------|-----------|
+| `golang.zx2c4.com/wireguard` (wireguard-go) | Copyright © 2017–2025 WireGuard LLC. All Rights Reserved |
 
 **MIT License text:**
 
@@ -131,7 +144,10 @@ The following components are distributed under the BSD 3-Clause License:
 | `github.com/munnerz/goautoneg` | Copyright © 2011, Open Knowledge Foundation Ltd. |
 | `github.com/remyoudompheng/bigfft` | Copyright © 2012 The Go Authors |
 | `golang.org/x/crypto` | Copyright © 2009 The Go Authors |
+| `golang.org/x/net` | Copyright © 2009 The Go Authors |
+| `golang.org/x/oauth2` | Copyright © 2009 The Go Authors |
 | `golang.org/x/sys` | Copyright © 2009 The Go Authors |
+| `golang.org/x/text` | Copyright © 2009 The Go Authors |
 | `golang.org/x/time` | Copyright © 2009 The Go Authors |
 | `google.golang.org/protobuf` | Copyright © 2018 The Go Authors |
 | `modernc.org/gc/v3` | Copyright © 2016 The GC Authors |
@@ -162,6 +178,8 @@ The following components are distributed under the Apache License, Version 2.0:
 
 | Package | Copyright |
 |---------|-----------|
+| `github.com/coreos/go-oidc/v3` | Copyright © 2014 CoreOS, Inc |
+| `github.com/go-jose/go-jose/v4` | Copyright © 2014 Square Inc |
 | `github.com/tetratelabs/wazero` | Copyright © Tetrate Labs |
 | `github.com/prometheus/client_golang` | Copyright © 2012–2015 The Prometheus Authors |
 | `github.com/prometheus/client_model` | Copyright © 2012–2015 The Prometheus Authors |
