@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Multi-platform builds need QEMU for the non-native arch
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
 
       - uses: docker/setup-buildx-action@v3
 
