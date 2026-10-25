@@ -599,35 +599,48 @@ func (h *DockerHandler) HandleDeployCompose(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	tmp, err := os.CreateTemp("", "compose-*.yml")
-	if err != nil {
-		http.Error(w, "create temp file", http.StatusInternalServerError)
-		return
-	}
-	defer os.Remove(tmp.Name())
-
-	if _, err = tmp.Write(body); err != nil {
-		tmp.Close()
-		http.Error(w, "write temp file", http.StatusInternalServerError)
-		return
-	}
-	tmp.Close()
-
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, "docker", "compose", "-f", tmp.Name(), "up", "-d").CombinedOutput()
+	out, err := h.applyComposeLocally(r.Context(), body)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": string(out)})
+		json.NewEncoder(w).Encode(map[string]string{"error": out})
 		return
 	}
 
 	audit("COMPOSE_DEPLOYED", r)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"output": string(out)})
+	json.NewEncoder(w).Encode(map[string]string{"output": out})
+}
+
+// applyComposeLocally runs `docker compose up -d` against body on this node.
+// Pure exec logic, no HTTP concerns — shared by HandleDeployCompose (after
+// its proxy/secret-resolution/availability checks) and the GitOps
+// reconciler, which applies manifests in-process without an HTTP round trip.
+// Callers are responsible for checking docker availability first; on
+// failure the returned string is the command's combined output, suitable
+// to surface directly to a user or sync-history record.
+func (h *DockerHandler) applyComposeLocally(ctx context.Context, body []byte) (string, error) {
+	tmp, err := os.CreateTemp("", "compose-*.yml")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err = tmp.Write(body); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	tmp.Close()
+
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "docker", "compose", "-f", tmp.Name(), "up", "-d").CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("docker compose up -d failed")
+	}
+	return string(out), nil
 }
 
 // HandleContainerTraces scrapes the last N log lines of a container, extracts
